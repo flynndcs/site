@@ -113,7 +113,16 @@
         }
 
         function route() {
-            const hash = location.hash.slice(1) || (flags.blog ? "blog" : "hello");
+            let hash = location.hash.slice(1) || (flags.blog ? "blog" : "hello");
+
+            // Enforce flags — redirect to first enabled section if flag is off
+            const section = hash.startsWith("post/") ? "blog" : hash;
+            if (section && !flags[section]) {
+                const fallback = Object.keys(flags).find(k => flags[k]) || "";
+                location.hash = fallback;
+                return;
+            }
+
             document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
 
             if (hash.startsWith("post/")) {
