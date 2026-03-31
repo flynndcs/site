@@ -8,20 +8,58 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             margin: 0;
             background: #fafafa;
             color: #333;
+            gap: 1.5rem;
         }
         h1 {
             font-weight: 400;
             font-size: 1.5rem;
+            margin: 0;
+        }
+        button {
+            font-family: inherit;
+            font-size: 0.9rem;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+            color: #333;
+            cursor: pointer;
+        }
+        button:hover {
+            border-color: #999;
+        }
+        #result {
+            font-size: 0.85rem;
+            color: #666;
+            min-height: 1.2em;
         }
     </style>
 </head>
 <body>
     <h1>Daniel Flynn</h1>
+    <button onclick="sayHello()">Say hello</button>
+    <div id="result"></div>
+    <script>
+        const API = "https://api.danielflynn.site";
+
+        async function sayHello() {
+            const el = document.getElementById("result");
+            el.textContent = "Loading...";
+            try {
+                const res = await fetch(API + "/hello");
+                const data = await res.json();
+                el.textContent = `${data.message} Visit #${data.visitCount} — last visit: ${data.lastVisit}`;
+            } catch (err) {
+                el.textContent = "Could not reach the API.";
+            }
+        }
+    </script>
 </body>
 </html>

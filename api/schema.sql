@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS visits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  visited_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
