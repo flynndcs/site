@@ -88,6 +88,14 @@
         <div id="hello-result"></div>
     </div>
 
+    <div id="section-paypal" class="section">
+        <p>Buy me a coffee?</p>
+        <a href="https://paypal.me/danielcflynn" target="_blank" rel="noopener noreferrer"
+           style="display:inline-block; padding:0.5rem 1.2rem; border:1px solid #ccc; border-radius:4px; background:#fff; color:#333; text-decoration:none; font-size:0.9rem;">
+            PayPal
+        </a>
+    </div>
+
     <script>
         const API = "https://api.danielflynn.site";
         let flags = {};
@@ -135,6 +143,7 @@
             const links = [];
             if (flags.blog) links.push('<a href="/blog">Blog</a>');
             if (flags.hello) links.push('<a href="/hello">Hello</a>');
+            if (flags.paypal) links.push('<a href="/paypal">PayPal</a>');
             nav.innerHTML = links.join("");
         }
 
