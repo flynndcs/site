@@ -22,7 +22,7 @@
             font-size: 1.5rem;
             margin: 0 0 0.5rem 0;
         }
-        nav { display: flex; gap: 1rem; }
+        nav { display: flex; gap: 1rem; flex-wrap: wrap; }
         nav a {
             color: #555;
             text-decoration: none;
@@ -31,22 +31,48 @@
         nav a:hover { color: #000; }
         .section { display: none; }
         .section.active { display: block; }
-        .post-list { list-style: none; padding: 0; }
-        .post-list li { margin-bottom: 0.75rem; }
-        .post-list a {
-            color: #333;
-            text-decoration: none;
+        h2 { font-weight: 400; font-size: 1.1rem; }
+
+        /* About */
+        .about { display: flex; gap: 1.5rem; align-items: flex-start; }
+        .about img {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex-shrink: 0;
         }
-        .post-list a:hover { text-decoration: underline; }
-        .post-list .date {
+        .about p { margin: 0; }
+
+        /* Markdown lists (blog + projects) */
+        .md-list { list-style: none; padding: 0; }
+        .md-list li { margin-bottom: 0.75rem; }
+        .md-list a { color: #333; text-decoration: none; }
+        .md-list a:hover { text-decoration: underline; }
+        .md-list .date {
             color: #999;
             font-size: 0.8rem;
             margin-left: 0.5rem;
         }
-        .post-content { line-height: 1.7; }
-        .post-content h1 { font-size: 1.3rem; margin-top: 0; }
+        .md-list .desc {
+            display: block;
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+        /* Markdown content */
+        .md-content { line-height: 1.7; }
+        .md-content h1 { font-size: 1.3rem; margin-top: 0; }
         .back { font-size: 0.85rem; margin-bottom: 1rem; display: inline-block; color: #555; text-decoration: none; }
         .back:hover { color: #000; }
+
+        /* Links */
+        .links-list { list-style: none; padding: 0; }
+        .links-list li { margin-bottom: 0.5rem; }
+        .links-list a { color: #333; text-decoration: none; }
+        .links-list a:hover { text-decoration: underline; }
+
+        /* Hello */
         button {
             font-family: inherit;
             font-size: 0.9rem;
@@ -64,6 +90,19 @@
             min-height: 1.2em;
             margin-top: 0.75rem;
         }
+
+        /* PayPal */
+        .paypal-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+            color: #333;
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+        .paypal-btn:hover { border-color: #999; }
     </style>
 </head>
 <body>
@@ -72,36 +111,77 @@
         <nav id="nav"></nav>
     </header>
 
-    <div id="section-blog" class="section">
-        <div id="blog-list">
-            <h2 style="font-weight:400; font-size:1.1rem;">Posts</h2>
-            <ul class="post-list" id="post-list"></ul>
-        </div>
-        <div id="blog-post" style="display:none;">
-            <a href="/blog" class="back">&larr; Back to posts</a>
-            <div class="post-content" id="post-content"></div>
+    <!-- About -->
+    <div id="section-about" class="section">
+        <div class="about">
+            <img src="/images/headshot.jpg" alt="Daniel Flynn">
+            <div>
+                <p>Daniel Flynn is ... <!-- TODO: replace with your bio --></p>
+            </div>
         </div>
     </div>
 
+    <!-- Blog -->
+    <div id="section-blog" class="section">
+        <div id="blog-list">
+            <h2>Posts</h2>
+            <ul class="md-list" id="blog-list-ul"></ul>
+        </div>
+        <div id="blog-post" style="display:none;">
+            <a href="/blog" class="back">&larr; Back to posts</a>
+            <div class="md-content" id="blog-content"></div>
+        </div>
+    </div>
+
+    <!-- Projects -->
+    <div id="section-projects" class="section">
+        <div id="projects-list">
+            <h2>Projects</h2>
+            <ul class="md-list" id="projects-list-ul"></ul>
+        </div>
+        <div id="projects-post" style="display:none;">
+            <a href="/projects" class="back">&larr; Back to projects</a>
+            <div class="md-content" id="projects-content"></div>
+        </div>
+    </div>
+
+    <!-- Links -->
+    <div id="section-links" class="section">
+        <h2>Links</h2>
+        <ul class="links-list">
+            <li><a href="https://github.com/TODO" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            <li><a href="https://linkedin.com/in/TODO" target="_blank" rel="noopener noreferrer">LinkedIn</a></li>
+            <li><a href="mailto:TODO@example.com">Email</a></li>
+        </ul>
+    </div>
+
+    <!-- Hello -->
     <div id="section-hello" class="section">
         <button onclick="sayHello()">Say hello</button>
         <div id="hello-result"></div>
     </div>
 
+    <!-- PayPal -->
     <div id="section-paypal" class="section">
         <p>Buy me a coffee?</p>
-        <a href="https://paypal.me/danielcflynn" target="_blank" rel="noopener noreferrer"
-           style="display:inline-block; padding:0.5rem 1.2rem; border:1px solid #ccc; border-radius:4px; background:#fff; color:#333; text-decoration:none; font-size:0.9rem;">
-            PayPal
-        </a>
+        <a href="https://paypal.me/danielcflynn" target="_blank" rel="noopener noreferrer" class="paypal-btn">PayPal</a>
     </div>
 
     <script>
         const API = "https://api.danielflynn.site";
         let flags = {};
 
+        // Nav order
+        const NAV_ITEMS = [
+            { key: "about",    label: "About",    path: "/about" },
+            { key: "blog",     label: "Blog",     path: "/blog" },
+            { key: "projects", label: "Projects", path: "/projects" },
+            { key: "links",    label: "Links",    path: "/links" },
+            { key: "hello",    label: "Hello",    path: "/hello" },
+            { key: "paypal",   label: "PayPal",   path: "/paypal" },
+        ];
+
         function getPath() {
-            // On redirect from 404.html, path arrives as ?p=/blog etc.
             const params = new URLSearchParams(location.search);
             const redirected = params.get("p");
             if (redirected) {
@@ -127,12 +207,11 @@
             route();
             window.addEventListener("popstate", route);
 
-            // Intercept link clicks for client-side navigation
             document.addEventListener("click", (e) => {
                 const a = e.target.closest("a");
                 if (!a) return;
                 const href = a.getAttribute("href");
-                if (!href || href.startsWith("http") || href.startsWith("//")) return;
+                if (!href || href.startsWith("http") || href.startsWith("//") || href.startsWith("mailto:")) return;
                 e.preventDefault();
                 navigate(href);
             });
@@ -140,21 +219,24 @@
 
         function buildNav() {
             const nav = document.getElementById("nav");
-            const links = [];
-            if (flags.blog) links.push('<a href="/blog">Blog</a>');
-            if (flags.hello) links.push('<a href="/hello">Hello</a>');
-            if (flags.paypal) links.push('<a href="/paypal">PayPal</a>');
-            nav.innerHTML = links.join("");
+            nav.innerHTML = NAV_ITEMS
+                .filter(item => flags[item.key])
+                .map(item => `<a href="${item.path}">${item.label}</a>`)
+                .join("");
+        }
+
+        function firstEnabledSection() {
+            const item = NAV_ITEMS.find(i => flags[i.key]);
+            return item ? item.key : "";
         }
 
         function route() {
             const path = getPath();
             const parts = path.split("/").filter(Boolean);
-            const section = parts[0] || (flags.blog ? "blog" : "hello");
+            const section = parts[0] || firstEnabledSection();
 
-            // Enforce flags
             if (section && !flags[section]) {
-                const fallback = Object.keys(flags).find(k => flags[k]) || "";
+                const fallback = firstEnabledSection();
                 history.replaceState(null, "", "/" + fallback);
                 route();
                 return;
@@ -162,48 +244,63 @@
 
             document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
 
-            if (section === "blog" && parts[1]) {
-                document.getElementById("section-blog").classList.add("active");
-                showPost(parts[1]);
+            const hasSubpage = (section === "blog" || section === "projects") && parts[1];
+
+            if (hasSubpage) {
+                document.getElementById("section-" + section).classList.add("active");
+                showMarkdownPost(section, parts[1]);
             } else {
                 const el = document.getElementById("section-" + section);
                 if (el) el.classList.add("active");
-                if (section === "blog") showBlogList();
+                if (section === "blog") showMarkdownList("blog");
+                if (section === "projects") showMarkdownList("projects");
             }
         }
 
-        async function showBlogList() {
-            document.getElementById("blog-list").style.display = "";
-            document.getElementById("blog-post").style.display = "none";
-            const list = document.getElementById("post-list");
-            if (list.children.length > 0) return;
+        // --- Shared markdown list/post rendering ---
+
+        const listCache = {};
+
+        async function showMarkdownList(section) {
+            document.getElementById(section + "-list").style.display = "";
+            document.getElementById(section + "-post").style.display = "none";
+            const ul = document.getElementById(section + "-list-ul");
+            if (ul.children.length > 0) return;
+
+            const jsonPath = section === "blog" ? "/blog/posts.json" : "/projects/projects.json";
 
             try {
-                const res = await fetch("/blog/posts.json");
-                const posts = await res.json();
-                list.innerHTML = posts.map(p =>
-                    `<li><a href="/blog/${p.slug}">${p.title}</a><span class="date">${p.date}</span></li>`
-                ).join("");
+                const res = await fetch(jsonPath);
+                const items = await res.json();
+                listCache[section] = items;
+                ul.innerHTML = items.map(item => {
+                    const desc = item.description ? `<span class="desc">${item.description}</span>` : "";
+                    return `<li><a href="/${section}/${item.slug}">${item.title}</a><span class="date">${item.date}</span>${desc}</li>`;
+                }).join("");
             } catch {
-                list.innerHTML = "<li>Could not load posts.</li>";
+                ul.innerHTML = "<li>Could not load content.</li>";
             }
         }
 
-        async function showPost(slug) {
-            document.getElementById("blog-list").style.display = "none";
-            document.getElementById("blog-post").style.display = "";
-            const content = document.getElementById("post-content");
+        async function showMarkdownPost(section, slug) {
+            document.getElementById(section + "-list").style.display = "none";
+            document.getElementById(section + "-post").style.display = "";
+            const content = document.getElementById(section + "-content");
             content.innerHTML = "Loading...";
 
+            const basePath = section === "blog" ? "/blog" : "/projects";
+
             try {
-                const res = await fetch(`/blog/${slug}.md`);
+                const res = await fetch(`${basePath}/${slug}.md`);
                 if (!res.ok) throw new Error();
                 const md = await res.text();
                 content.innerHTML = marked.parse(md);
             } catch {
-                content.innerHTML = "Post not found.";
+                content.innerHTML = "Not found.";
             }
         }
+
+        // --- Hello ---
 
         async function sayHello() {
             const el = document.getElementById("hello-result");

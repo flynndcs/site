@@ -11,3 +11,6 @@ CREATE TABLE IF NOT EXISTS flags (
 INSERT OR IGNORE INTO flags (name, enabled) VALUES ('blog', 1);
 INSERT OR IGNORE INTO flags (name, enabled) VALUES ('hello', 1);
 INSERT OR IGNORE INTO flags (name, enabled) VALUES ('paypal', 1);
+INSERT OR IGNORE INTO flags (name, enabled) VALUES ('about', 1);
+INSERT OR IGNORE INTO flags (name, enabled) VALUES ('projects', 1);
+INSERT OR IGNORE INTO flags (name, enabled) VALUES ('links', 1);
