@@ -78,7 +78,7 @@
             <ul class="post-list" id="post-list"></ul>
         </div>
         <div id="blog-post" style="display:none;">
-            <a href="#blog" class="back">&larr; Back to posts</a>
+            <a href="/blog" class="back">&larr; Back to posts</a>
             <div class="post-content" id="post-content"></div>
         </div>
     </div>
@@ -92,6 +92,22 @@
         const API = "https://api.danielflynn.site";
         let flags = {};
 
+        function getPath() {
+            // On redirect from 404.html, path arrives as ?p=/blog etc.
+            const params = new URLSearchParams(location.search);
+            const redirected = params.get("p");
+            if (redirected) {
+                history.replaceState(null, "", redirected);
+                return redirected;
+            }
+            return location.pathname;
+        }
+
+        function navigate(path) {
+            history.pushState(null, "", path);
+            route();
+        }
+
         async function init() {
             try {
                 const res = await fetch(API + "/flags");
@@ -101,37 +117,49 @@
             }
             buildNav();
             route();
-            window.addEventListener("hashchange", route);
+            window.addEventListener("popstate", route);
+
+            // Intercept link clicks for client-side navigation
+            document.addEventListener("click", (e) => {
+                const a = e.target.closest("a");
+                if (!a) return;
+                const href = a.getAttribute("href");
+                if (!href || href.startsWith("http") || href.startsWith("//")) return;
+                e.preventDefault();
+                navigate(href);
+            });
         }
 
         function buildNav() {
             const nav = document.getElementById("nav");
             const links = [];
-            if (flags.blog) links.push('<a href="#blog">Blog</a>');
-            if (flags.hello) links.push('<a href="#hello">Hello</a>');
+            if (flags.blog) links.push('<a href="/blog">Blog</a>');
+            if (flags.hello) links.push('<a href="/hello">Hello</a>');
             nav.innerHTML = links.join("");
         }
 
         function route() {
-            let hash = location.hash.slice(1) || (flags.blog ? "blog" : "hello");
+            const path = getPath();
+            const parts = path.split("/").filter(Boolean);
+            const section = parts[0] || (flags.blog ? "blog" : "hello");
 
-            // Enforce flags — redirect to first enabled section if flag is off
-            const section = hash.startsWith("post/") ? "blog" : hash;
+            // Enforce flags
             if (section && !flags[section]) {
                 const fallback = Object.keys(flags).find(k => flags[k]) || "";
-                location.hash = fallback;
+                history.replaceState(null, "", "/" + fallback);
+                route();
                 return;
             }
 
             document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
 
-            if (hash.startsWith("post/")) {
+            if (section === "blog" && parts[1]) {
                 document.getElementById("section-blog").classList.add("active");
-                showPost(hash.slice(5));
+                showPost(parts[1]);
             } else {
-                const el = document.getElementById("section-" + hash);
+                const el = document.getElementById("section-" + section);
                 if (el) el.classList.add("active");
-                if (hash === "blog") showBlogList();
+                if (section === "blog") showBlogList();
             }
         }
 
@@ -145,7 +173,7 @@
                 const res = await fetch("/blog/posts.json");
                 const posts = await res.json();
                 list.innerHTML = posts.map(p =>
-                    `<li><a href="#post/${p.slug}">${p.title}</a><span class="date">${p.date}</span></li>`
+                    `<li><a href="/blog/${p.slug}">${p.title}</a><span class="date">${p.date}</span></li>`
                 ).join("");
             } catch {
                 list.innerHTML = "<li>Could not load posts.</li>";

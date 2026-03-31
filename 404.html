@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <script>
+        // Redirect to index.html preserving the path via query param
+        var path = location.pathname + location.search;
+        location.replace("/?p=" + encodeURIComponent(path));
+    </script>
+</head>
+<body></body>
+</html>
