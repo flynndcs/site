@@ -6,6 +6,17 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Checkout abuse limits (counted over the last hour of pending orders).
+const MAX_PENDING_PER_EMAIL = 3;
+const MAX_PENDING_GLOBAL = 50;
+
+// Public browsing/checkout routes 404 while the 'store' flag is off.
+// Downloads, the Stripe webhook and admin routes are deliberately not gated.
+async function storeEnabled(env) {
+  const row = await env.DB.prepare("SELECT enabled FROM flags WHERE name = 'store'").first();
+  return !!row && row.enabled === 1;
+}
+
 async function sha256(text) {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
 }
@@ -75,7 +86,12 @@ export async function handleStore(request, env, url, json) {
   const method = request.method;
   let m;
 
-  // --- Public ---
+  // --- Public (gated by the 'store' flag) ---
+
+  const gated =
+    (method === "GET" && /^\/products(\/|$)/.test(pathname)) ||
+    (method === "POST" && pathname === "/checkout");
+  if (gated && !(await storeEnabled(env))) return json({ error: "Not found" }, 404);
 
   if (pathname === "/products" && method === "GET") {
     const rows = await env.DB.prepare(
@@ -110,6 +126,22 @@ export async function handleStore(request, env, url, json) {
     if (!body || !EMAIL_RE.test(email) || email.length > 254) return json({ error: "Valid email required" }, 400);
     const p = await getProduct(env, String(body.slug || ""));
     if (!p || !p.active || !p.file_key) return json({ error: "Product not found" }, 404);
+
+    // Reuse a recent pending order for the same buyer + product instead of piling up rows.
+    const existing = await env.DB.prepare(
+      "SELECT id FROM orders WHERE email = ? AND product_slug = ? AND status = 'pending' AND created_at > datetime('now', '-1 hour') LIMIT 1"
+    ).bind(email, p.slug).first();
+    if (existing) {
+      const session = await createCheckout(env, p, { id: existing.id });
+      return json({ orderId: existing.id, ...session });
+    }
+
+    const recent = await env.DB.prepare(
+      "SELECT COUNT(*) AS global, SUM(email = ?) AS mine FROM orders WHERE status = 'pending' AND created_at > datetime('now', '-1 hour')"
+    ).bind(email).first();
+    if (recent.global >= MAX_PENDING_GLOBAL || (recent.mine || 0) >= MAX_PENDING_PER_EMAIL) {
+      return json({ error: "Too many requests, try again later" }, 429);
+    }
 
     const order = {
       id: randomHex(16),
