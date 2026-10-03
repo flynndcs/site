@@ -1,3 +1,5 @@
+import { handleStore, isAdmin } from "./store.js";
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -5,8 +7,8 @@ export default {
 
     const corsHeaders = {
       "Access-Control-Allow-Origin": allowedOrigin,
-      "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-File-Name",
     };
 
     if (request.method === "OPTIONS") {
@@ -32,8 +34,7 @@ export default {
       const name = flagMatch[1];
 
       if (request.method === "GET" || request.method === "PUT") {
-        const token = (request.headers.get("Authorization") || "").replace("Bearer ", "");
-        if (!token || token !== env.ADMIN_TOKEN) {
+        if (!(await isAdmin(request, env))) {
           return json({ error: "Unauthorized" }, 401);
         }
       }
@@ -71,6 +72,9 @@ export default {
         lastVisit: stats.latest,
       });
     }
+
+    const storeResponse = await handleStore(request, env, url, json);
+    if (storeResponse) return storeResponse;
 
     return json({ error: "Not found" }, 404);
   },

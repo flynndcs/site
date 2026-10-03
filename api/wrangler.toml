@@ -9,3 +9,9 @@ ALLOWED_ORIGIN = "https://danielflynn.site"
 binding = "DB"
 database_name = "danielflynn-db"
 database_id = "88bb2758-ff58-4732-b523-495a3a2fe9d1"
+
+# Private bucket for purchasable files. Create it before deploying:
+#   npx wrangler r2 bucket create danielflynn-store
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "danielflynn-store"
