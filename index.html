@@ -106,6 +106,12 @@
             font-size: 0.9rem;
         }
         .paypal-btn:hover { border-color: #999; }
+        .price { color: #555; font-size: 0.9rem; }
+        .store-form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
+        .store-form input { flex: 1; min-width: 12rem; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font: inherit; }
+        #store-preview { margin: 1rem 0; }
+        #store-preview audio, #store-preview img { max-width: 100%; }
+        #store-preview iframe { width: 100%; height: 480px; border: 1px solid #ccc; }
     </style>
 </head>
 <body>
@@ -148,6 +154,28 @@
         </div>
     </div>
 
+    <!-- Store -->
+    <div id="section-store" class="section">
+        <div id="store-list">
+            <h2>Store</h2>
+            <ul class="md-list" id="store-list-ul"></ul>
+        </div>
+        <div id="store-product" style="display:none;">
+            <a href="/store" class="back">&larr; Back to store</a>
+            <div class="md-content">
+                <h1 id="store-title"></h1>
+                <p class="price" id="store-price"></p>
+                <p id="store-desc"></p>
+                <div id="store-preview"></div>
+                <form class="store-form" id="store-form">
+                    <input type="email" id="store-email" placeholder="Email for your download link" required autocomplete="email">
+                    <button type="submit">Buy</button>
+                </form>
+                <div id="store-result"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Links -->
     <div id="section-links" class="section">
         <h2>Links</h2>
@@ -171,7 +199,7 @@
     </div>
 
     <script>
-        const API = "https://api.danielflynn.site";
+        const API = location.hostname === "localhost" ? "http://localhost:8787" : "https://api.danielflynn.site";
         let flags = {};
 
         // Nav order
@@ -179,7 +207,8 @@
             { key: "about",    label: "About",    path: "/about" },
             { key: "blog",     label: "Blog",     path: "/blog" },
             { key: "projects", label: "Projects", path: "/projects" },
-            { key: "links",    label: "Links",    path: "/links" },
+            { key: "store",    label: "Store",    path: "/store" },
+            { key: "links",   label: "Links",    path: "/links" },
             { key: "hello",    label: "Hello",    path: "/hello" },
             { key: "paypal",   label: "PayPal",   path: "/paypal" },
         ];
@@ -249,7 +278,11 @@
 
             const hasSubpage = (section === "blog" || section === "projects") && parts[1];
 
-            if (hasSubpage) {
+            if (section === "store") {
+                document.getElementById("section-store").classList.add("active");
+                if (parts[1]) showProduct(parts[1]);
+                else showStoreList();
+            } else if (hasSubpage) {
                 document.getElementById("section-" + section).classList.add("active");
                 showMarkdownPost(section, parts[1]);
             } else {
@@ -302,6 +335,79 @@
                 content.innerHTML = "Not found.";
             }
         }
+
+        // --- Store ---
+
+        const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+        const money = (cents, cur) => new Intl.NumberFormat(undefined, { style: "currency", currency: cur.toUpperCase() }).format(cents / 100);
+        let currentProduct = null;
+
+        async function showStoreList() {
+            document.getElementById("store-list").style.display = "";
+            document.getElementById("store-product").style.display = "none";
+            const ul = document.getElementById("store-list-ul");
+            ul.innerHTML = "<li>Loading...</li>";
+            try {
+                const res = await fetch(API + "/products");
+                const items = await res.json();
+                ul.innerHTML = items.length
+                    ? items.map(p => `<li><a href="/store/${esc(p.slug)}">${esc(p.title)}</a><span class="date">${money(p.priceCents, p.currency)}</span></li>`).join("")
+                    : "<li>Nothing for sale yet.</li>";
+            } catch {
+                ul.innerHTML = "<li>Could not load the store.</li>";
+            }
+        }
+
+        async function showProduct(slug) {
+            document.getElementById("store-list").style.display = "none";
+            document.getElementById("store-product").style.display = "";
+            document.getElementById("store-result").textContent = "";
+            document.getElementById("store-preview").innerHTML = "";
+            document.getElementById("store-title").textContent = "Loading...";
+            currentProduct = null;
+            try {
+                const res = await fetch(`${API}/products/${encodeURIComponent(slug)}`);
+                if (!res.ok) throw new Error();
+                const p = await res.json();
+                currentProduct = p;
+                document.getElementById("store-title").textContent = p.title;
+                document.getElementById("store-price").textContent = money(p.priceCents, p.currency);
+                document.getElementById("store-desc").textContent = p.description;
+                if (p.hasPreview) {
+                    const src = `${API}/products/${encodeURIComponent(p.slug)}/preview`;
+                    const type = p.previewType || "";
+                    document.getElementById("store-preview").innerHTML =
+                        type.startsWith("audio/") ? `<audio controls src="${src}"></audio>` :
+                        type.startsWith("image/") ? `<img src="${src}" alt="Preview of ${esc(p.title)}">` :
+                        type === "application/pdf" ? `<iframe src="${src}" title="Preview of ${esc(p.title)}"></iframe>` :
+                        `<a href="${src}" target="_blank" rel="noopener">Preview</a>`;
+                }
+                document.getElementById("store-form").style.display = "";
+            } catch {
+                document.getElementById("store-title").textContent = "Not found.";
+                document.getElementById("store-form").style.display = "none";
+            }
+        }
+
+        document.getElementById("store-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            if (!currentProduct) return;
+            const out = document.getElementById("store-result");
+            out.textContent = "Working...";
+            try {
+                const res = await fetch(API + "/checkout", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ slug: currentProduct.slug, email: document.getElementById("store-email").value }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Checkout failed");
+                if (data.url) { location.href = data.url; return; }
+                out.textContent = "Checkout is not live yet — no payment was taken.";
+            } catch (err) {
+                out.textContent = err.message || "Could not start checkout.";
+            }
+        });
 
         // --- Hello ---
 
