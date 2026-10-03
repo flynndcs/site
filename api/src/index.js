@@ -1,4 +1,5 @@
 import { handleStore, isAdmin } from "./store.js";
+import { isRateLimited } from "./ratelimit.js";
 
 export default {
   async fetch(request, env) {
@@ -17,6 +18,13 @@ export default {
 
     const json = (data, status = 200) =>
       Response.json(data, { status, headers: corsHeaders });
+
+    if (await isRateLimited(request, env, url.pathname)) {
+      return Response.json(
+        { error: "Too many requests" },
+        { status: 429, headers: { ...corsHeaders, "Retry-After": "60" } }
+      );
+    }
 
     // --- Feature Flags ---
 
@@ -58,8 +66,11 @@ export default {
     // --- Hello ---
 
     if (url.pathname === "/hello" && request.method === "GET") {
+      // Cap writes globally (10/min) so a flood can't grow the table or burn D1's write quota.
+      // Over the cap, the request still gets stats but isn't recorded.
       await env.DB.prepare(
-        "INSERT INTO visits (visited_at) VALUES (datetime('now'))"
+        "INSERT INTO visits (visited_at) SELECT datetime('now') " +
+          "WHERE (SELECT COUNT(*) FROM visits WHERE visited_at > datetime('now', '-1 minute')) < 10"
       ).run();
 
       const stats = await env.DB.prepare(

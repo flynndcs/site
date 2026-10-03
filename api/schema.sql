@@ -3,6 +3,8 @@ CREATE TABLE IF NOT EXISTS visits (
   visited_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_visits_visited_at ON visits(visited_at);
+
 CREATE TABLE IF NOT EXISTS flags (
   name TEXT PRIMARY KEY,
   enabled INTEGER NOT NULL DEFAULT 1
