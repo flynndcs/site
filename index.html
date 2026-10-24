@@ -444,6 +444,20 @@
             }
         }
 
+        // Music Shapes runs in a fully sandboxed iframe (no storage of its own), so this page keeps its project in
+        // localStorage on its behalf. Only messages from that iframe are honoured.
+        (function () {
+            const KEY = "music-shapes:project:v2", frame = document.getElementById("shapes-frame");
+            window.addEventListener("message", (e) => {
+                const d = e.data;
+                if (!frame || e.source !== frame.contentWindow || !d || d.app !== "music-shapes") return;
+                try {
+                    if (d.type === "save" && typeof d.data === "string" && d.data.length < 2e6) localStorage.setItem(KEY, d.data);
+                    else if (d.type === "clear") localStorage.removeItem(KEY);
+                    else if (d.type === "load") frame.contentWindow.postMessage({ app: "music-shapes", type: "project", data: localStorage.getItem(KEY) }, "*");
+                } catch {}
+            });
+        })();
         init();
     </script>
 </body>
