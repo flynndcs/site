@@ -12,6 +12,18 @@
   header { border-bottom:1px solid var(--line); }
   footer { border-top:1px solid var(--line); }
   main { display:grid; grid-template-columns:1fr 280px; min-height:0; }
+  #left { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .tabs { display:flex; } .tabs button { border-radius:0; } .tabs button:first-child { border-radius:5px 0 0 5px; } .tabs button:last-child { border-radius:0 5px 5px 0; margin-left:-1px; }
+  body.mode-workshop .stage-only, body.mode-stage .workshop-only { display:none !important; }
+  body.mode-workshop canvas { background:#171922; background-image:radial-gradient(#2c3040 1px, transparent 1px); background-size:24px 24px; }
+  body.mode-stage canvas { background:#0b0b0f; }
+  #modelabel { position:absolute; left:26px; top:24px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--dim); pointer-events:none; }
+  #tray { display:flex; gap:8px; padding:8px 12px; border-top:1px solid var(--line); background:var(--panel); overflow-x:auto; align-items:stretch; min-height:92px; }
+  #tray .empty { color:var(--dim); align-self:center; }
+  .thumb { flex:0 0 auto; width:76px; border:1px solid var(--line); border-radius:6px; padding:4px; background:#14161d; cursor:grab; text-align:center; user-select:none; }
+  .thumb:hover { border-color:var(--accent); }
+  .thumb canvas { width:60px; height:60px; background:none !important; border:0; aspect-ratio:auto; max-width:none; max-height:none; display:block; margin:0 auto; }
+  .thumb span { display:block; font-size:10px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #banner { position:absolute; left:50%; top:60px; transform:translateX(-50%); white-space:nowrap; background:#2a2140; border:1px solid #9b7bff; color:#e6e8ee; padding:6px 14px; border-radius:6px; z-index:4; display:none; }
   #banner.show { display:block; }
   .xfbar { position:absolute; top:12px; height:8px; border-radius:4px; opacity:.5; pointer-events:none; background:linear-gradient(to right, var(--a), var(--b)); }
@@ -24,11 +36,12 @@
   #toast { position:absolute; left:50%; top:22px; transform:translateX(-50%); white-space:nowrap; background:#272a35; border:1px solid var(--accent); color:var(--text); padding:7px 14px; border-radius:6px; opacity:0; pointer-events:none; transition:opacity .15s; z-index:5; }
   #toast.show { opacity:1; }
   canvas:focus { outline:none; }
-  #stage { position:relative; display:flex; align-items:center; justify-content:center; padding:16px; min-width:0; min-height:0; }
+  #stage { position:relative; flex:1; display:flex; align-items:center; justify-content:center; padding:16px; min-width:0; min-height:0; }
   canvas { background:#0b0b0f; max-width:100%; max-height:100%; aspect-ratio:16/9; border:1px solid var(--line); touch-action:none; }
   aside { background:var(--panel); border-left:1px solid var(--line); padding:12px; overflow:auto; }
   button, select, input { font:inherit; color:var(--text); background:#272a35; border:1px solid var(--line); border-radius:5px; padding:5px 9px; }
   button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
   input[type=range] { padding:0; }
   input[type=color] { padding:0; width:32px; height:26px; }
@@ -66,24 +79,33 @@
 </head>
 <body>
 <header>
-  <label class="file">Upload audio<input id="file" type="file" accept="audio/*" hidden></label>
-  <span id="fname" class="dim">no file</span>
+  <div class="tabs" role="tablist">
+    <button data-mode="workshop" class="on" title="Create and edit your shapes (1)">Workshop</button>
+    <button data-mode="stage" title="Arrange shapes, mark events and play (2)">Stage</button>
+  </div>
   <div class="sep"></div>
   <button data-tool="select" title="Select / move (V)">Select</button>
-  <button data-tool="pen" class="on" title="Pen: click and drag to draw (P)">Pen</button>
-  <button data-tool="rect" title="Rectangle (R)">Rectangle</button>
-  <button data-tool="ellipse" title="Ellipse (E)">Ellipse</button>
-  <button data-tool="triangle" title="Triangle (T)">Triangle</button>
-  <button data-tool="transform" title="Transform: turn one shape into another over time (X)">Transform</button>
+  <button data-tool="pen" class="workshop-only on" title="Pen: click and drag to draw (P)">Pen</button>
+  <button data-tool="rect" class="workshop-only" title="Rectangle (R)">Rectangle</button>
+  <button data-tool="ellipse" class="workshop-only" title="Ellipse (E)">Ellipse</button>
+  <button data-tool="triangle" class="workshop-only" title="Triangle (T)">Triangle</button>
+  <button data-tool="transform" class="stage-only" title="Transform: turn one shape into another over time (X)">Transform</button>
+  <div class="sep stage-only"></div>
+  <label class="file stage-only">Upload audio<input id="file" type="file" accept="audio/*" hidden></label>
+  <span id="fname" class="dim stage-only">no file</span>
   <div class="sep"></div>
   <button id="save">Save JSON</button>
   <label class="file" style="background:#272a35">Load JSON<input id="load" type="file" accept="application/json" hidden></label>
+  <button id="newproj" title="Start over (clears the library and the stage)">New</button>
 </header>
 <main>
-  <div id="stage"><canvas id="cv" width="960" height="540" tabindex="0"></canvas><div id="banner"></div><div id="toast" role="status"></div></div>
+  <div id="left">
+    <div id="stage"><canvas id="cv" width="960" height="540" tabindex="0"></canvas><div id="modelabel"></div><div id="banner"></div><div id="toast" role="status"></div></div>
+    <div id="tray" class="stage-only"></div>
+  </div>
   <aside id="inspector"></aside>
 </main>
-<footer>
+<footer class="stage-only">
   <button id="play" style="width:70px">Play</button>
   <div id="timeline"><input id="seek" type="range" min="0" max="1000" value="0"><div id="markers"></div></div>
   <span id="time" class="dim">0:00 / 0:00</span>
@@ -97,7 +119,12 @@ const $ = id => document.getElementById(id);
 
 
 const state = {
-  shapes: [], selIds: [],
+  // The Workshop holds the library of shape definitions (`symbols`); the Stage holds placed copies (`stage` instances) that point at a symbol.
+  // `shapes` is whichever list belongs to the active space, so selection / drawing / hit-testing code works in both.
+  symbols: [], stage: [], mode: 'workshop', deleteArmed: null,
+  get shapes() { return this.mode === 'stage' ? this.stage : this.symbols; },
+  set shapes(v) { if (this.mode === 'stage') this.stage = v; else this.symbols = v; },
+  selIds: [],
   // `sel` is the id when exactly one shape is selected (inspector edits it); assigning it selects just that shape
   get sel() { return this.selIds.length === 1 ? this.selIds[0] : null; },
   set sel(v) { this.selIds = v == null ? [] : [v]; },
@@ -229,14 +256,32 @@ function transformClick(p) {
   }
   updateBanner(); renderInspector();
 }
-function deleteShape(id) {
+function removeFromStage(id) {   // a placed shape: also drop its events and transformations
   state.transforms = state.transforms.filter(x => x.from !== id && x.to !== id);
   if (state.pendingXf && !pendingXf()) { state.pendingXf = null; updateBanner(); }
-  state.shapes = state.shapes.filter(s => s.id !== id);
+  state.stage = state.stage.filter(s => s.id !== id);
   state.events.forEach(e => e.shapeIds = e.shapeIds.filter(x => x !== id));
   state.events = state.events.filter(e => e.shapeIds.length);   // an event with no shapes left does nothing
   state.selIds = state.selIds.filter(x => x !== id);
   state.selEvent = null;
+}
+function deleteShape(id) {
+  if (state.mode === 'workshop') {   // deleting a library shape also removes every placement of it on the stage
+    usesOf(id).forEach(i => removeFromStage(i.id));
+    state.symbols = state.symbols.filter(q => q.id !== id);
+    state.selIds = state.selIds.filter(x => x !== id); state.selEvent = null;
+  } else removeFromStage(id);
+}
+// Delete key / button: library shapes that are in use need a second press (there is no undo)
+function deleteSelection() {
+  const ids = [...state.selIds];
+  if (!ids.length) return;
+  if (state.mode === 'workshop') {
+    const used = ids.reduce((n, id) => n + usesOf(id).length, 0), key = ids.join();
+    const armed = state.deleteArmed && state.deleteArmed.key === key && performance.now() - state.deleteArmed.t < 4000;
+    if (used && !armed) { state.deleteArmed = { key, t: performance.now() }; toast(`${used} placed on the stage: press Delete again to remove the shape and those placements`); renderInspector(); return; }
+  }
+  state.deleteArmed = null; ids.forEach(deleteShape); renderInspector();
 }
 // New events alternate: Show by default, but Hide when the shape's previous event was Show.
 // (For a group, Hide only if every shape's previous event was Show.)
@@ -260,8 +305,29 @@ let hasAudio = false;
 
 // ---------- shapes ----------
 const randColor = () => '#' + Math.floor(Math.random() * 0x777777 + 0x777777).toString(16).padStart(6, '0');
+const TYPE_NAMES = { path: 'Drawing', rect: 'Rectangle', ellipse: 'Ellipse', triangle: 'Triangle' };
+function uniqueName(type) {
+  let n = state.symbols.filter(q => q.type === type).length + 1;
+  while (state.symbols.some(q => q.name === `${TYPE_NAMES[type]} ${n}`)) n++;
+  return `${TYPE_NAMES[type]} ${n}`;
+}
 function makeShape(type, x, y, w, h) {
-  return { id: state.nextId++, type, x, y, w, h, rot: 0, opacity: 1, fill: randColor() };
+  const s = { id: state.nextId++, type, x, y, w, h, rot: 0, opacity: 1, fill: randColor() };
+  if (state.mode === 'workshop') s.name = uniqueName(type);   // library shapes are named
+  return s;
+}
+const symbolOf = i => state.symbols.find(q => q.id === i.symbolId);
+const usesOf = id => state.stage.filter(i => i.symbolId === id);
+// stage instances take their look (type, colour, outline) from their symbol, so editing a symbol updates every placement
+function syncInstances() {
+  for (const i of state.stage) { const q = symbolOf(i); if (q) { i.type = q.type; i.fill = q.fill; i.lw = q.lw; i.pts = q.pts; } }
+}
+// bring a library shape onto the stage (an instance with its own position, size, rotation and opacity)
+function addInstance(sym, x, y) {
+  const n = usesOf(sym.id).length % 8;
+  const i = { id: state.nextId++, symbolId: sym.id, type: sym.type, fill: sym.fill, lw: sym.lw, pts: sym.pts,
+    x: x ?? 480 + n * 24, y: y ?? 270 + n * 24, w: sym.w, h: sym.h, rot: 0, opacity: 1 };
+  state.stage.push(i); return i;
 }
 
 // ---------- pen strokes ----------
@@ -299,11 +365,11 @@ function finishStroke(d) {
   return s;
 }
 // smooth curve through the midpoints of the (simplified) polyline
-function strokePath(P) {
-  ctx.beginPath(); ctx.moveTo(P[0][0], P[0][1]);
+function strokePath(P, c = ctx) {
+  c.beginPath(); c.moveTo(P[0][0], P[0][1]);
   for (let i = 1; i < P.length - 1; i++)
-    ctx.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
-  ctx.lineTo(P[P.length - 1][0], P[P.length - 1][1]);
+    c.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
+  c.lineTo(P[P.length - 1][0], P[P.length - 1][1]);
 }
 const toLocalPts = s => s.pts.map(([x, y]) => [x * s.w, y * s.h]);
 
@@ -320,18 +386,19 @@ function aabb(s) {
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
 
-function path(s, w, h) {
-  ctx.beginPath();
-  if (s.type === 'rect') ctx.rect(-w / 2, -h / 2, w, h);
-  else if (s.type === 'ellipse') ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
-  else { ctx.moveTo(0, -h / 2); ctx.lineTo(w / 2, h / 2); ctx.lineTo(-w / 2, h / 2); ctx.closePath(); }
+function path(s, w, h, c = ctx) {
+  c.beginPath();
+  if (s.type === 'rect') c.rect(-w / 2, -h / 2, w, h);
+  else if (s.type === 'ellipse') c.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+  else { c.moveTo(0, -h / 2); c.lineTo(w / 2, h / 2); c.lineTo(-w / 2, h / 2); c.closePath(); }
 }
 function draw() {
   const playing = !audio.paused, t = audio.currentTime || 0;
+  syncInstances();
   ctx.clearRect(0, 0, W, H);
   if (!state.shapes.length && !drag) {
     ctx.fillStyle = '#4a4e5c'; ctx.font = '20px system-ui, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Click and drag to draw', W / 2, H / 2);
+    ctx.fillText(state.mode === 'workshop' ? 'Click and drag to draw a shape for your library' : (state.symbols.length ? 'Bring shapes in from the library below' : 'Your library is empty: draw shapes in the Workshop first'), W / 2, H / 2);
   }
   for (const s of state.shapes) {
     // hidden shapes stay as faint ghosts (25% paused, 12% playing) so they can still be edited / clicked to mark their next event
@@ -446,7 +513,7 @@ cv.addEventListener('pointerdown', ev => {
   const p = pos(ev);
   state.selEvent = null;
   if (state.tool === 'transform') { transformClick(p); return; }
-  if (playing) {   // while the track plays: click a shape to mark its next event right now; drag a box to mark a group on release
+  if (playing && state.mode === 'stage') {   // while the track plays: click a shape to mark its next event right now; drag a box to mark a group on release
     const h = hit(p, true);
     console.debug('[click]', { x: Math.round(p.x), y: Math.round(p.y), hit: h ? h.id : null, time: audio.currentTime });
     if (h) { state.sel = h.id; addEvent(); return; }
@@ -541,6 +608,8 @@ addEventListener('keydown', ev => {
   if (!typing && !ev.ctrlKey && !ev.metaKey) {
     if (ev.key === 'Escape') { if (state.pendingXf) cancelPendingXf(); else setTool('select'); }
     else if (KEYS[ev.key.toLowerCase()]) setTool(KEYS[ev.key.toLowerCase()]);
+    else if (ev.key === '1') setMode('workshop');
+    else if (ev.key === '2') setMode('stage');
   }
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a' && !typing) {
     ev.preventDefault(); setTool('select'); state.selIds = state.shapes.map(s => s.id); state.selEvent = null; renderInspector();
@@ -550,16 +619,61 @@ addEventListener('keydown', ev => {
   }
   if ((ev.key === 'Delete' || ev.key === 'Backspace') && !typing) {
     if (state.selEvent) { state.events = state.events.filter(e => e.id !== state.selEvent); state.selEvent = null; renderInspector(); }
-    else if (state.selIds.length) { [...state.selIds].forEach(deleteShape); renderInspector(); }   // deletes the whole selection
+    else deleteSelection();   // the whole selection
   }
 }, true);   // capture phase: nothing else on the page can swallow these keys
 
 // ---------- toolbar ----------
+const TOOLS = { workshop: ['select', 'pen', 'rect', 'ellipse', 'triangle'], stage: ['select', 'transform'] };
 function setTool(t) {
+  if (!TOOLS[state.mode].includes(t)) return toast(state.mode === 'stage' ? 'Shapes are drawn in the Workshop, then brought in from the library below' : 'Transformations are made on the Stage');
   if (t !== 'transform' && state.pendingXf) cancelPendingXf();
   state.tool = t; updateBanner();
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
 }
+function setMode(m) {
+  if (m === state.mode && document.body.classList.contains('mode-' + m)) return;
+  if (!audio.paused) audio.pause();
+  if (state.pendingXf) cancelPendingXf();
+  state.mode = m; state.selIds = []; state.selEvent = state.selXf = null; state.flash = state.ripple = null; state.deleteArmed = null;
+  document.body.classList.toggle('mode-workshop', m === 'workshop'); document.body.classList.toggle('mode-stage', m === 'stage');
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  $('modelabel').textContent = m === 'workshop' ? 'Workshop · your shape library' : 'Stage · your presentation';
+  syncInstances(); setTool(m === 'workshop' ? 'pen' : 'select');
+  renderTray(); renderInspector();
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+
+// ---------- library tray (Stage): click or drag a library shape to bring it onto the stage ----------
+function drawThumb(c, sym) {
+  const x = c.getContext('2d'); x.clearRect(0, 0, c.width, c.height);
+  const m = 10, k = Math.min((c.width - 2 * m) / Math.max(sym.w, 1), (c.height - 2 * m) / Math.max(sym.h, 1));
+  x.save(); x.translate(c.width / 2, c.height / 2); x.scale(k, k);
+  if (sym.type === 'path') { x.strokeStyle = sym.fill; x.lineWidth = Math.max(3 / k, sym.lw); x.lineJoin = x.lineCap = 'round'; strokePath(toLocalPts(sym), x); x.stroke(); }
+  else { x.fillStyle = sym.fill; path(sym, sym.w, sym.h, x); x.fill(); }
+  x.restore();
+}
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+function renderTray() {
+  const el = $('tray');
+  if (!state.symbols.length) { el.innerHTML = '<span class="empty">Your library is empty. Draw shapes in the Workshop, then bring them in here.</span>'; return; }
+  el.innerHTML = state.symbols.map(q => `<div class="thumb" draggable="true" data-sym="${q.id}" title="${esc(q.name)}: click, or drag onto the stage"><canvas width="120" height="120"></canvas><span>${esc(q.name)}</span></div>`).join('');
+  el.querySelectorAll('.thumb').forEach(t => {
+    const q = state.symbols.find(x => x.id === +t.dataset.sym);
+    drawThumb(t.querySelector('canvas'), q);
+    t.onclick = () => { const i = addInstance(q); state.sel = i.id; state.selEvent = null; toast(`Added "${q.name}" to the stage`); renderInspector(); };
+    t.ondragstart = ev => { ev.dataTransfer.setData('text/plain', 'sym:' + q.id); ev.dataTransfer.effectAllowed = 'copy'; };
+  });
+}
+cv.addEventListener('dragover', ev => { if (state.mode === 'stage') { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; } });
+cv.addEventListener('drop', ev => {
+  if (state.mode !== 'stage') return;
+  ev.preventDefault();
+  const m = /^sym:(\d+)$/.exec(ev.dataTransfer.getData('text/plain')), q = m && state.symbols.find(x => x.id === +m[1]);
+  if (!q) return;
+  const p = pos(ev), i = addInstance(q, p.x, p.y);
+  state.sel = i.id; state.selEvent = null; toast(`Added "${q.name}" to the stage`); renderInspector();
+});
 document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
 
 $('file').onchange = e => {
@@ -583,20 +697,81 @@ function updateTime() {
   if (d && document.activeElement !== $('seek')) $('seek').value = audio.currentTime / d * 1000;
 }
 
+// ---------- project: save / load / autosave ----------
+// version 2: a library of shapes (`symbols`) + the presentation (`stage` placements, events, transformations).
+// Older single-canvas files load too: every old shape becomes a library shape plus one placement on the stage.
+function projectData() {
+  return { version: 2, symbols: state.symbols,
+    stage: state.stage.map(i => ({ id: i.id, symbolId: i.symbolId, x: i.x, y: i.y, w: i.w, h: i.h, rot: i.rot, opacity: i.opacity })),
+    events: state.events, transforms: completeXfs(), nextId: state.nextId, nextEv: state.nextEv, nextXf: state.nextXf };
+}
+function loadProject(d) {
+  let symbols, stage, nextId = d.nextId || 1;
+  if (Array.isArray(d.symbols)) { symbols = d.symbols; stage = (d.stage || []).filter(i => symbols.some(q => q.id === i.symbolId)); }
+  else {
+    const olds = d.shapes || [], count = {};
+    nextId = Math.max(nextId, 1, ...olds.map(o => o.id + 1));
+    symbols = []; stage = [];
+    for (const o of olds) {
+      const q = { id: nextId++, name: `${TYPE_NAMES[o.type]} ${count[o.type] = (count[o.type] || 0) + 1}`, type: o.type, x: o.x, y: o.y, w: o.w, h: o.h, rot: 0, opacity: 1, fill: o.fill, lw: o.lw, pts: o.pts };
+      symbols.push(q); stage.push({ id: o.id, symbolId: q.id, x: o.x, y: o.y, w: o.w, h: o.h, rot: o.rot || 0, opacity: o.opacity ?? 1 });
+    }
+  }
+  state.symbols = symbols; state.stage = stage; syncInstances();
+  state.nextId = Math.max(nextId, 1, ...symbols.map(q => q.id + 1), ...stage.map(i => i.id + 1));
+  state.events = (d.events || []).map(e => e.shapeIds ? e : { ...e, shapeIds: [e.shapeId] }); state.nextEv = d.nextEv || state.events.length + 1;
+  state.transforms = (d.transforms || []).filter(x => x.to != null && x.end != null); state.nextXf = d.nextXf || state.transforms.length + 1;
+  state.selIds = []; state.selEvent = state.selXf = state.pendingXf = null; state.deleteArmed = null;
+  updateBanner(); renderTray(); renderInspector();
+}
 $('save').onclick = () => {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify({ shapes: state.shapes, nextId: state.nextId, events: state.events, nextEv: state.nextEv, transforms: completeXfs(), nextXf: state.nextXf }, null, 2)], { type: 'application/json' }));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(projectData(), null, 2)], { type: 'application/json' }));
   a.download = 'design.json'; a.click();
 };
 $('load').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
+  try { loadProject(JSON.parse(await f.text())); } catch { alert('Could not read that file.'); }
+};
+// The whole project (library + stage) is kept in this browser and restored on reload. Normally that is localStorage; when the app
+// runs inside a sandboxed iframe (no storage access, e.g. embedded in a web page) it asks the host page to keep it via postMessage.
+const LS_KEY = 'music-shapes:project:v2';
+let lastSaved = '';
+let lsOk = true; try { localStorage.getItem(LS_KEY); } catch { lsOk = false; }
+const hosted = window.parent !== window;
+const toHost = msg => { try { window.parent.postMessage({ app: 'music-shapes', ...msg }, '*'); } catch {} };
+function autosave() {
   try {
-    const d = JSON.parse(await f.text());
-    state.shapes = d.shapes; state.nextId = d.nextId || state.shapes.length + 1; state.sel = null;
-    state.events = (d.events || []).map(e => e.shapeIds ? e : { ...e, shapeIds: [e.shapeId] }); state.nextEv = d.nextEv || state.events.length + 1; state.selEvent = null;
-    state.transforms = (d.transforms || []).filter(x => x.to != null && x.end != null); state.nextXf = d.nextXf || state.transforms.length + 1; state.selXf = state.pendingXf = null; updateBanner();
-    renderInspector();
-  } catch { alert('Could not read that file.'); }
+    const j = JSON.stringify(projectData());
+    if (j === lastSaved) return;
+    lastSaved = j;
+    if (lsOk) localStorage.setItem(LS_KEY, j); else if (hosted) toHost({ type: 'save', data: j });
+  } catch {}
+}
+function restoreSaved() {
+  try {
+    if (lsOk) { const j = localStorage.getItem(LS_KEY); if (j) { loadProject(JSON.parse(j)); lastSaved = j; return true; } }
+    else if (hosted) toHost({ type: 'load' });   // the host answers with a 'project' message (below)
+  } catch {}
+  return false;
+}
+addEventListener('message', ev => {   // only the page that embeds us may hand us a project
+  const d = ev.data;
+  if (ev.source !== window.parent || !d || d.app !== 'music-shapes' || d.type !== 'project' || typeof d.data !== 'string') return;
+  if (state.symbols.length || state.stage.length) return;   // already working on something: don't overwrite it
+  try { loadProject(JSON.parse(d.data)); lastSaved = d.data; setMode(state.stage.length ? 'stage' : 'workshop'); } catch {}
+});
+setInterval(autosave, 1500);
+addEventListener('pagehide', autosave);
+document.addEventListener('visibilitychange', () => { if (document.hidden) autosave(); });
+let newArmed = -Infinity;
+$('newproj').onclick = () => {
+  const b = $('newproj');
+  if (performance.now() - newArmed > 3000) { newArmed = performance.now(); b.textContent = 'Click again to clear all'; setTimeout(() => { b.textContent = 'New'; }, 3000); return; }
+  newArmed = -Infinity; b.textContent = 'New';
+  loadProject({ symbols: [], stage: [], events: [], transforms: [], nextId: 1, nextEv: 1, nextXf: 1 });
+  try { if (lsOk) localStorage.removeItem(LS_KEY); else if (hosted) toHost({ type: 'clear' }); } catch {} lastSaved = '';
+  setMode('workshop'); toast('Started a new project');
 };
 
 // ---------- timeline event markers ----------
@@ -664,39 +839,82 @@ $('markers').addEventListener('pointermove', ev => {
 $('markers').addEventListener('pointerup', () => { if (mkDrag) { mkDrag = null; renderInspector(); } });
 
 // ---------- inspector ----------
+// Workshop: edit the library shape itself (name, look, size); the Stage only places copies of it
+function renderWorkshopInspector() {
+  const el = $('inspector'), s = sel(), n = state.selIds.length;
+  const armed = state.deleteArmed && state.deleteArmed.key === state.selIds.join() && performance.now() - state.deleteArmed.t < 4000;
+  const used = state.selIds.reduce((c, id) => c + usesOf(id).length, 0);
+  const delLabel = armed ? 'Click again to delete' : 'Delete';
+  if (!s && n > 1) {
+    el.innerHTML = `
+      <h3>${n} library shapes selected</h3>
+      <div class="row"><button id="w-add" class="primary">Add all to stage</button><button id="m-dup">Duplicate</button><button id="m-del">${delLabel}</button></div>
+      <p class="dim">${used ? `${used} placement${used > 1 ? 's' : ''} on the stage; deleting removes them too.` : 'None of these are on the stage yet.'} Drag any selected shape to move them together. Select one shape to edit it.</p>`;
+    $('w-add').onclick = () => { const added = selShapes().map(q => addInstance(q)); toast(`Added ${added.length} shapes to the stage`); renderInspector(); };
+    $('m-del').onclick = deleteSelection;
+    $('m-dup').onclick = () => {
+      const copies = selShapes().map(o => { const c = JSON.parse(JSON.stringify(o)); c.id = state.nextId++; c.name = o.name + ' copy'; c.x += 24; c.y += 24; return c; });
+      state.symbols.push(...copies); state.selIds = copies.map(c => c.id); renderInspector();
+    };
+    return;
+  }
+  if (!s) {
+    el.innerHTML = `<h3>Workshop</h3><p class="dim">Your shape library. Draw with the Pen (drag), or pick Rectangle / Ellipse / Triangle (P / R / E / T). Select a shape to rename or restyle it, then <b>Add to stage</b>, or switch to the Stage tab and bring shapes in from the tray. Editing a shape here updates every copy on the stage.</p>
+      <p class="dim">${state.symbols.length} shape${state.symbols.length === 1 ? '' : 's'} in the library, ${state.stage.length} on the stage.</p>`;
+    return;
+  }
+  el.innerHTML = `
+    <h3>Library shape (${s.type}${s.pts ? ', ' + s.pts.length + ' pts' : ''})</h3>
+    <div class="row"><span>Name</span><input type="text" id="w-name" value="${esc(s.name || '')}" style="flex:1;min-width:0"></div>
+    <div class="row"><span>${s.pts ? 'Color' : 'Fill'}</span><input type="color" id="i-fill" value="${s.fill}"></div>
+    ${s.pts ? `<div class="row"><span>Line</span><input type="number" id="i-lw" min="1" max="60" value="${s.lw}"></div>` : ''}
+    <div class="row"><span>Width</span><input type="number" id="i-w" value="${Math.round(s.w)}"></div>
+    <div class="row"><span>Height</span><input type="number" id="i-h" value="${Math.round(s.h)}"></div>
+    <div class="row"><button id="w-add" class="primary">Add to stage</button><button id="i-dup">Duplicate</button><button id="i-del">${delLabel}</button></div>
+    <p class="dim">${used ? `Placed ${used}&times; on the stage. Changes here update every placement.` : 'Not on the stage yet. Add it here, or from the Stage tab.'}</p>`;
+  $('w-name').oninput = e => { s.name = e.target.value.slice(0, 40); };
+  $('i-fill').oninput = e => { s.fill = e.target.value; };
+  if (s.pts) $('i-lw').oninput = e => { s.lw = Math.max(1, +e.target.value); };
+  $('i-w').oninput = e => { const w = Math.max(1, +e.target.value); usesOf(s.id).forEach(i => i.w *= w / s.w); s.w = w; };
+  $('i-h').oninput = e => { const h = Math.max(1, +e.target.value); usesOf(s.id).forEach(i => i.h *= h / s.h); s.h = h; };
+  $('w-add').onclick = () => { addInstance(s); toast(`Added "${s.name}" to the stage`); renderInspector(); };
+  $('i-dup').onclick = () => { const c = JSON.parse(JSON.stringify(s)); c.id = state.nextId++; c.name = s.name + ' copy'; c.x += 24; c.y += 24; state.symbols.push(c); state.sel = c.id; renderInspector(); };
+  $('i-del').onclick = deleteSelection;
+}
 function renderInspector(skipMarkers) {
   if (!skipMarkers) renderMarkers();
+  if (state.mode === 'workshop') return renderWorkshopInspector();
   const el = $('inspector'), s = sel();
   if (!s && state.selIds.length > 1) {   // several shapes selected: group actions
     const n = state.selIds.length;
     el.innerHTML = `
       <h3>${n} shapes selected</h3>
-      <div class="row"><button id="m-dup">Duplicate</button><button id="m-del">Delete</button></div>
+      <div class="row"><button id="m-dup">Duplicate</button><button id="m-del">Remove from stage</button></div>
       <h3>Events (over time)</h3>
       <button id="i-addev" ${audio.duration ? '' : 'disabled title="Upload audio first"'}>+ Event for all ${n} at playhead (M)</button>
       <p class="dim">Drag any selected shape to move them together; Delete removes them all. Shift-click or shift-drag adds or removes shapes. Select a single shape to edit it.</p>`;
     $('i-addev').onclick = addEvent;
-    $('m-del').onclick = () => { [...state.selIds].forEach(deleteShape); renderInspector(); };
+    $('m-del').onclick = deleteSelection;
     $('m-dup').onclick = () => {
       const copies = selShapes().map(o => { const c = JSON.parse(JSON.stringify(o)); c.id = state.nextId++; c.x += 20; c.y += 20; return c; });
-      state.shapes.push(...copies); state.selIds = copies.map(c => c.id); renderInspector();
+      state.stage.push(...copies); state.selIds = copies.map(c => c.id); renderInspector();
     };
     return;
   }
-  if (!s) { el.innerHTML = '<p class="dim">Click and drag on the canvas to draw freehand with the pen. Switch tools with the toolbar or V / P / R / E / T (Esc = Select). With Select, click a shape to edit it, or drag a box (shift to add) to select several and move or delete them together. Then upload a track and press Play: click shapes as the music plays to mark when they appear and disappear. The Transform tool (X) turns one shape into another over time.</p>'; return; }
+  if (!s) { el.innerHTML = `<h3>Stage</h3><p class="dim">Bring shapes in from the library tray below (click, or drag onto the stage), then arrange them with Select. Upload a track and press Play: click shapes as the music plays to mark when they appear and disappear. The Transform tool (X) turns one shape into another over time. Draw and restyle shapes in the Workshop.</p>
+      <p class="dim">${state.stage.length} on the stage, ${state.symbols.length} in the library.</p>`; return; }
   const evs = s ? state.events.filter(e => e.shapeIds.includes(s.id) || e.id === state.selEvent).sort((a, b) => a.time - b.time) : [];
   const GLYPH = { path: '✎', rect: '▭', ellipse: '◯', triangle: '△' };
   const opt = (obj, cur) => (Array.isArray(obj) ? obj.map(k => [k, k]) : Object.entries(obj))
     .map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${v}</option>`).join('');
   el.innerHTML = `
-    <h3>Shape (${s.type}${s.pts ? ', ' + s.pts.length + ' pts' : ''})</h3>
-    <div class="row"><span>${s.pts ? 'Color' : 'Fill'}</span><input type="color" id="i-fill" value="${s.fill}"></div>
-    ${s.pts ? `<div class="row"><span>Line</span><input type="number" id="i-lw" min="1" max="60" value="${s.lw}"></div>` : ''}
+    <h3>On stage</h3>
+    <div class="row"><span>Shape</span><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc((symbolOf(s) || {}).name || s.type)}</b><button id="s-edit" title="Change its look in the Workshop">Edit in Workshop</button></div>
     <div class="row"><span>Width</span><input type="number" id="i-w" value="${Math.round(s.w)}"></div>
     <div class="row"><span>Height</span><input type="number" id="i-h" value="${Math.round(s.h)}"></div>
     <div class="row"><span>Rotation</span><input type="number" id="i-rot" value="${Math.round(s.rot)}"></div>
     <div class="row"><span>Opacity</span><input type="range" id="i-op" min="0" max="1" step="0.01" value="${s.opacity}"></div>
-    <div class="row"><button id="i-up">Forward</button><button id="i-down">Back</button><button id="i-dup">Duplicate</button><button id="i-del">Delete</button></div>
+    <div class="row"><button id="i-up">Forward</button><button id="i-down">Back</button><button id="i-dup">Duplicate</button><button id="i-del">Remove</button></div>
     <h3>Events (over time)</h3>
     ${evs.map(e => `
       <div class="evrow ${e.id === state.selEvent ? 'sel' : ''}" data-ev="${e.id}">
@@ -734,8 +952,7 @@ function renderInspector(skipMarkers) {
     row.onclick = ev => { if (ev.target === row || ev.target.tagName === 'SPAN') { state.selXf = x.id; renderInspector(); } };
   });
   const bind = (id, fn) => $(id).oninput = e => fn(e.target);
-  bind('i-fill', t => s.fill = t.value);
-  if (s.pts) bind('i-lw', t => s.lw = Math.max(1, +t.value));
+  $('s-edit').onclick = () => { const q = symbolOf(s); setMode('workshop'); if (q) { state.sel = q.id; renderInspector(); } };
   bind('i-w', t => s.w = Math.max(1, +t.value));
   bind('i-h', t => s.h = Math.max(1, +t.value));
   bind('i-rot', t => s.rot = +t.value);
@@ -743,8 +960,8 @@ function renderInspector(skipMarkers) {
   const reorder = d => { const i = state.shapes.indexOf(s), j = i + d; if (j >= 0 && j < state.shapes.length) { state.shapes.splice(i, 1); state.shapes.splice(j, 0, s); } };
   $('i-up').onclick = () => reorder(1);
   $('i-down').onclick = () => reorder(-1);
-  $('i-dup').onclick = () => { const c = JSON.parse(JSON.stringify(s)); c.id = state.nextId++; c.x += 20; c.y += 20; state.shapes.push(c); state.sel = c.id; renderInspector(); };
-  $('i-del').onclick = () => { deleteShape(s.id); renderInspector(); };
+  $('i-dup').onclick = () => { const c = JSON.parse(JSON.stringify(s)); c.id = state.nextId++; c.x += 20; c.y += 20; state.stage.push(c); state.sel = c.id; renderInspector(); };
+  $('i-del').onclick = deleteSelection;
   $('i-addev').onclick = addEvent;
   el.querySelectorAll('.evrow').forEach(row => {
     const e = state.events.find(x => x.id === +row.dataset.ev);
@@ -768,7 +985,8 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
-renderInspector();
+restoreSaved();
+setMode(state.stage.length ? 'stage' : 'workshop');
 frame();
 </script>
 </body>
