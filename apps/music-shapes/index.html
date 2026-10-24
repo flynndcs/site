@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music Shapes</title>
+<style>
+  :root { --bg:#14151a; --panel:#1d1f27; --line:#2d303b; --text:#e6e8ee; --dim:#8b90a0; --accent:#6c8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px system-ui,sans-serif; height:100vh; display:grid; grid-template-rows:auto 1fr auto; }
+  header, footer { background:var(--panel); border-color:var(--line); display:flex; gap:8px; align-items:center; padding:8px 12px; flex-wrap:wrap; }
+  header { border-bottom:1px solid var(--line); }
+  footer { border-top:1px solid var(--line); }
+  main { display:grid; grid-template-columns:1fr 280px; min-height:0; }
+  #stage { display:flex; align-items:center; justify-content:center; padding:16px; min-width:0; min-height:0; }
+  canvas { background:#0b0b0f; max-width:100%; max-height:100%; aspect-ratio:16/9; border:1px solid var(--line); touch-action:none; }
+  aside { background:var(--panel); border-left:1px solid var(--line); padding:12px; overflow:auto; }
+  button, select, input { font:inherit; color:var(--text); background:#272a35; border:1px solid var(--line); border-radius:5px; padding:5px 9px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  input[type=range] { padding:0; }
+  input[type=color] { padding:0; width:32px; height:26px; }
+  input[type=number] { width:70px; }
+  label.file { cursor:pointer; background:var(--accent); padding:5px 10px; border-radius:5px; color:#fff; }
+  .sep { width:1px; height:22px; background:var(--line); margin:0 4px; }
+  h3 { margin:14px 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
+  .row { display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap; }
+  .row > span { width:56px; color:var(--dim); }
+  .bind { border:1px solid var(--line); border-radius:6px; padding:6px; margin-bottom:6px; }
+  .bind select { width:48%; }
+  .bind input[type=range] { width:calc(100% - 30px); }
+  #meters { display:flex; gap:3px; align-items:flex-end; height:26px; }
+  #meters div { width:8px; background:var(--accent); min-height:2px; }
+  #seek { flex:1; min-width:160px; }
+  .dim { color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <label class="file">Upload audio<input id="file" type="file" accept="audio/*" hidden></label>
+  <span id="fname" class="dim">no file</span>
+  <div class="sep"></div>
+  <button data-tool="select" class="on">Select</button>
+  <button data-tool="rect">Rectangle</button>
+  <button data-tool="ellipse">Ellipse</button>
+  <button data-tool="triangle">Triangle</button>
+  <div class="sep"></div>
+  <button id="save">Save JSON</button>
+  <label class="file" style="background:#272a35">Load JSON<input id="load" type="file" accept="application/json" hidden></label>
+</header>
+<main>
+  <div id="stage"><canvas id="cv" width="960" height="540"></canvas></div>
+  <aside id="inspector"></aside>
+</main>
+<footer>
+  <button id="play" style="width:70px">Play</button>
+  <input id="seek" type="range" min="0" max="1000" value="0">
+  <span id="time" class="dim">0:00 / 0:00</span>
+  <div id="meters" title="bass / mid / treble / level / beat"><div></div><div></div><div></div><div></div><div></div></div>
+</footer>
+
+<script>
+'use strict';
+const W = 960, H = 540;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+
+const BANDS = ['bass', 'mid', 'treble', 'level', 'beat'];
+const PROPS = { scale:'Scale', rotate:'Rotate', opacity:'Opacity', x:'Offset X', y:'Offset Y', hue:'Hue shift' };
+
+const state = { shapes: [], sel: null, tool: 'select', nextId: 1 };
+const audio = new Audio();
+audio.crossOrigin = 'anonymous';
+let actx, analyser, freq, hasAudio = false;
+const bands = { bass:0, mid:0, treble:0, level:0, beat:0 };
+let bassAvg = 0;
+const peaks = {};
+
+// ---------- audio ----------
+function initAudio() {
+  if (actx) return;
+  actx = new AudioContext();
+  const src = actx.createMediaElementSource(audio);
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.6;
+  src.connect(analyser); analyser.connect(actx.destination);
+  freq = new Uint8Array(analyser.frequencyBinCount);
+}
+function avgRange(lo, hi) {
+  const hz = actx.sampleRate / analyser.fftSize;
+  const a = Math.max(1, Math.floor(lo / hz)), b = Math.min(freq.length - 1, Math.ceil(hi / hz));
+  let s = 0; for (let i = a; i <= b; i++) s += freq[i];
+  return s / (b - a + 1) / 255;
+}
+function updateBands() {
+  if (!analyser || audio.paused) { for (const k of BANDS) bands[k] *= 0.9; return; }
+  analyser.getByteFrequencyData(freq);
+  // normalize each band against its own slowly-decaying peak so quiet bands (treble) still move
+  for (const [k, lo, hi] of [['bass', 20, 150], ['mid', 150, 2000], ['treble', 2000, 10000], ['level', 20, 16000]]) {
+    const raw = avgRange(lo, hi);
+    peaks[k] = Math.max(raw, (peaks[k] || 0) * 0.998, 0.02);
+    bands[k] = Math.min(1, raw / peaks[k]);
+  }
+  bassAvg += (bands.bass - bassAvg) * 0.05;
+  const hit = Math.max(0, bands.bass - bassAvg - 0.04) * 6;
+  bands.beat = Math.max(bands.beat * 0.88, Math.min(1, hit));
+}
+
+// ---------- shapes ----------
+function makeShape(type, x, y, w, h) {
+  return { id: state.nextId++, type, x, y, w, h, rot: 0, opacity: 1,
+           fill: '#' + Math.floor(Math.random() * 0x777777 + 0x777777).toString(16).padStart(6, '0'),
+           bindings: [] };
+}
+const sel = () => state.shapes.find(s => s.id === state.sel);
+
+function effective(s, animate) {
+  const e = { x: s.x, y: s.y, sc: 1, rot: s.rot, op: s.opacity, hue: 0 };
+  if (!animate) return e;
+  for (const b of s.bindings) {
+    const v = bands[b.band] * b.amount;
+    switch (b.prop) {
+      case 'scale': e.sc += v; break;
+      case 'rotate': e.rot += v * 180; break;
+      case 'opacity': e.op += v; break;
+      case 'x': e.x += v * 200; break;
+      case 'y': e.y += v * 200; break;
+      case 'hue': e.hue += v * 180; break;
+    }
+  }
+  e.sc = Math.max(0.02, e.sc); e.op = Math.min(1, Math.max(0, e.op));
+  return e;
+}
+function path(s, w, h) {
+  ctx.beginPath();
+  if (s.type === 'rect') ctx.rect(-w / 2, -h / 2, w, h);
+  else if (s.type === 'ellipse') ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+  else { ctx.moveTo(0, -h / 2); ctx.lineTo(w / 2, h / 2); ctx.lineTo(-w / 2, h / 2); ctx.closePath(); }
+}
+function hueShift(hex, deg) {
+  if (!deg) return hex;
+  let r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  let h = 0, sat = 0;
+  if (d) {
+    sat = d / (1 - Math.abs(2 * l - 1));
+    h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h *= 60;
+  }
+  return `hsl(${(h + deg + 360) % 360} ${sat * 100}% ${l * 100}%)`;
+}
+
+function draw() {
+  const animate = !audio.paused;
+  ctx.clearRect(0, 0, W, H);
+  for (const s of state.shapes) {
+    const e = effective(s, animate);
+    ctx.save();
+    ctx.translate(e.x, e.y); ctx.rotate(e.rot * Math.PI / 180); ctx.scale(e.sc, e.sc);
+    ctx.globalAlpha = e.op;
+    ctx.fillStyle = hueShift(s.fill, e.hue);
+    path(s, s.w, s.h); ctx.fill();
+    ctx.restore();
+  }
+  const s = sel();
+  if (s && !animate) {   // selection box + resize handle
+    ctx.save();
+    ctx.translate(s.x, s.y); ctx.rotate(s.rot * Math.PI / 180);
+    ctx.strokeStyle = '#6c8cff'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+    ctx.strokeRect(-s.w / 2, -s.h / 2, s.w, s.h);
+    ctx.setLineDash([]); ctx.fillStyle = '#fff';
+    ctx.fillRect(s.w / 2 - 5, s.h / 2 - 5, 10, 10);
+    ctx.restore();
+  }
+}
+
+// ---------- pointer interaction ----------
+function pos(ev) {
+  const r = cv.getBoundingClientRect();
+  return { x: (ev.clientX - r.left) * W / r.width, y: (ev.clientY - r.top) * H / r.height };
+}
+function local(s, p) {   // world -> shape local space
+  const a = -s.rot * Math.PI / 180, dx = p.x - s.x, dy = p.y - s.y;
+  return { x: dx * Math.cos(a) - dy * Math.sin(a), y: dx * Math.sin(a) + dy * Math.cos(a) };
+}
+function hit(p) {
+  for (let i = state.shapes.length - 1; i >= 0; i--) {
+    const s = state.shapes[i], l = local(s, p);
+    if (Math.abs(l.x) <= s.w / 2 && Math.abs(l.y) <= s.h / 2) return s;
+  }
+  return null;
+}
+let drag = null;
+cv.addEventListener('pointerdown', ev => {
+  if (!audio.paused) return;
+  cv.setPointerCapture(ev.pointerId);
+  const p = pos(ev);
+  if (state.tool !== 'select') {
+    const s = makeShape(state.tool, p.x, p.y, 1, 1);
+    state.shapes.push(s); state.sel = s.id;
+    drag = { mode: 'create', start: p };
+    return renderInspector();
+  }
+  const cur = sel();
+  if (cur) {
+    const l = local(cur, p);
+    if (Math.abs(l.x - cur.w / 2) < 10 && Math.abs(l.y - cur.h / 2) < 10) { drag = { mode: 'resize' }; return; }
+  }
+  const h = hit(p);
+  state.sel = h ? h.id : null;
+  if (h) drag = { mode: 'move', dx: p.x - h.x, dy: p.y - h.y };
+  renderInspector();
+});
+cv.addEventListener('pointermove', ev => {
+  if (!drag) return;
+  const p = pos(ev), s = sel(); if (!s) return;
+  if (drag.mode === 'create') {
+    s.x = (p.x + drag.start.x) / 2; s.y = (p.y + drag.start.y) / 2;
+    s.w = Math.abs(p.x - drag.start.x); s.h = Math.abs(p.y - drag.start.y);
+  } else if (drag.mode === 'move') { s.x = p.x - drag.dx; s.y = p.y - drag.dy; }
+  else { const l = local(s, p); s.w = Math.max(8, Math.abs(l.x) * 2); s.h = Math.max(8, Math.abs(l.y) * 2); }
+});
+addEventListener('pointerup', () => {
+  if (drag && drag.mode === 'create') {
+    const s = sel();
+    if (s && (s.w < 6 || s.h < 6)) { s.w = 120; s.h = 120; }   // plain click => default size
+    setTool('select');
+  }
+  if (drag) renderInspector();
+  drag = null;
+});
+addEventListener('keydown', ev => {
+  if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel() && !/INPUT|SELECT/.test(document.activeElement.tagName)) {
+    state.shapes = state.shapes.filter(s => s.id !== state.sel); state.sel = null; renderInspector();
+  }
+});
+
+// ---------- toolbar ----------
+function setTool(t) {
+  state.tool = t;
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+}
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+
+$('file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  initAudio();
+  audio.src = URL.createObjectURL(f);
+  $('fname').textContent = f.name; hasAudio = true;
+  audio.onloadedmetadata = updateTime;
+};
+$('play').onclick = async () => {
+  if (!hasAudio) return alert('Upload an audio file first.');
+  initAudio(); await actx.resume();
+  audio.paused ? audio.play() : audio.pause();
+};
+audio.onplay = () => $('play').textContent = 'Pause';
+audio.onpause = () => $('play').textContent = 'Play';
+audio.onended = () => $('play').textContent = 'Play';
+$('seek').oninput = () => { if (audio.duration) audio.currentTime = $('seek').value / 1000 * audio.duration; };
+const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+function updateTime() {
+  const d = audio.duration || 0;
+  $('time').textContent = `${fmt(audio.currentTime)} / ${fmt(d)}`;
+  if (d && document.activeElement !== $('seek')) $('seek').value = audio.currentTime / d * 1000;
+}
+
+$('save').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ shapes: state.shapes, nextId: state.nextId }, null, 2)], { type: 'application/json' }));
+  a.download = 'design.json'; a.click();
+};
+$('load').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    state.shapes = d.shapes; state.nextId = d.nextId || state.shapes.length + 1; state.sel = null;
+    renderInspector();
+  } catch { alert('Could not read that file.'); }
+};
+
+// ---------- inspector ----------
+function renderInspector() {
+  const el = $('inspector'), s = sel();
+  if (!s) { el.innerHTML = '<p class="dim">Pick a tool and drag on the canvas to draw a shape (or click for a default size). Select a shape to edit it and bind it to the music.</p>'; return; }
+  const opt = (obj, cur) => (Array.isArray(obj) ? obj.map(k => [k, k]) : Object.entries(obj))
+    .map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${v}</option>`).join('');
+  el.innerHTML = `
+    <h3>Shape (${s.type})</h3>
+    <div class="row"><span>Fill</span><input type="color" id="i-fill" value="${s.fill}"></div>
+    <div class="row"><span>Width</span><input type="number" id="i-w" value="${Math.round(s.w)}"></div>
+    <div class="row"><span>Height</span><input type="number" id="i-h" value="${Math.round(s.h)}"></div>
+    <div class="row"><span>Rotation</span><input type="number" id="i-rot" value="${Math.round(s.rot)}"></div>
+    <div class="row"><span>Opacity</span><input type="range" id="i-op" min="0" max="1" step="0.01" value="${s.opacity}"></div>
+    <div class="row"><button id="i-up">Forward</button><button id="i-down">Back</button><button id="i-dup">Duplicate</button><button id="i-del">Delete</button></div>
+    <h3>Music bindings</h3>
+    ${s.bindings.map((b, i) => `
+      <div class="bind" data-i="${i}">
+        <select data-k="band">${opt(BANDS, b.band)}</select>
+        <select data-k="prop">${opt(PROPS, b.prop)}</select>
+        <input type="range" data-k="amount" min="-2" max="2" step="0.05" value="${b.amount}">
+        <button data-rm="${i}" title="Remove">×</button>
+      </div>`).join('')}
+    <button id="i-addb">+ Add binding</button>`;
+  const bind = (id, fn) => $(id).oninput = e => fn(e.target);
+  bind('i-fill', t => s.fill = t.value);
+  bind('i-w', t => s.w = Math.max(1, +t.value));
+  bind('i-h', t => s.h = Math.max(1, +t.value));
+  bind('i-rot', t => s.rot = +t.value);
+  bind('i-op', t => s.opacity = +t.value);
+  const reorder = d => { const i = state.shapes.indexOf(s), j = i + d; if (j >= 0 && j < state.shapes.length) { state.shapes.splice(i, 1); state.shapes.splice(j, 0, s); } };
+  $('i-up').onclick = () => reorder(1);
+  $('i-down').onclick = () => reorder(-1);
+  $('i-dup').onclick = () => { const c = JSON.parse(JSON.stringify(s)); c.id = state.nextId++; c.x += 20; c.y += 20; state.shapes.push(c); state.sel = c.id; renderInspector(); };
+  $('i-del').onclick = () => { state.shapes = state.shapes.filter(x => x !== s); state.sel = null; renderInspector(); };
+  $('i-addb').onclick = () => { s.bindings.push({ band: 'bass', prop: 'scale', amount: 0.5 }); renderInspector(); };
+  el.querySelectorAll('.bind').forEach(div => {
+    const b = s.bindings[+div.dataset.i];
+    div.querySelectorAll('[data-k]').forEach(inp => inp.oninput = () => b[inp.dataset.k] = inp.dataset.k === 'amount' ? +inp.value : inp.value);
+    div.querySelector('[data-rm]').onclick = () => { s.bindings.splice(+div.dataset.i, 1); renderInspector(); };
+  });
+}
+
+// ---------- main loop ----------
+const meters = [...document.querySelectorAll('#meters div')];
+function frame() {
+  updateBands(); draw(); updateTime();
+  BANDS.forEach((k, i) => meters[i].style.height = Math.max(2, bands[k] * 26) + 'px');
+  requestAnimationFrame(frame);
+}
+
+// starter demo shapes
+(function seed() {
+  const a = makeShape('ellipse', 480, 270, 160, 160); a.fill = '#6c8cff'; a.bindings = [{ band: 'bass', prop: 'scale', amount: 0.8 }];
+  const b = makeShape('triangle', 240, 270, 120, 120); b.fill = '#ff6c8c'; b.bindings = [{ band: 'mid', prop: 'rotate', amount: 1 }];
+  const c = makeShape('rect', 720, 270, 120, 120); c.fill = '#6cffb0'; c.bindings = [{ band: 'treble', prop: 'y', amount: -1 }, { band: 'beat', prop: 'hue', amount: 1 }];
+  state.shapes.push(a, b, c);
+})();
+renderInspector();
+frame();
+</script>
+</body>
+</html>
