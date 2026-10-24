@@ -44,7 +44,11 @@
   .mk.mine::after, .mk.mine::before { opacity:1; }
   .mk.sel::after { background:#fff; width:3px; left:4px; opacity:1; }
   .mk.sel::before { background:#fff; opacity:1; }
-  .evrow { border:1px solid var(--line); border-radius:6px; padding:6px; margin-bottom:6px; display:flex; gap:6px; align-items:center; }
+  .evrow { border:1px solid var(--line); border-radius:6px; padding:6px; margin-bottom:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .chips { flex-basis:100%; display:flex; flex-wrap:wrap; gap:4px; }
+  .chip { width:24px; height:22px; padding:0; font-size:12px; line-height:1; background:var(--c); color:#000; border:2px solid transparent; opacity:.35; text-shadow:0 0 2px #fff; }
+  .chip.inc { opacity:1; border-color:#fff; }
+  .chip.all { width:auto; padding:0 6px; background:#272a35; color:var(--dim); opacity:1; border:1px solid var(--line); text-shadow:none; }
   .evrow.sel { border-color:#fff; }
   .evrow input[type=number] { width:70px; }
   .evrow select { flex:1; }
@@ -88,10 +92,10 @@ const PROPS = { scale:'Scale', rotate:'Rotate', opacity:'Opacity', x:'Offset X',
 const state = { shapes: [], sel: null, tool: 'pen', nextId: 1, events: [], selEvent: null, nextEv: 1 };
 const EVENT_ACTIONS = { toggle: 'Toggle visible', show: 'Show', hide: 'Hide' };
 const FADE = 0.15;   // seconds
-// Visibility over time, derived only from events (so scrubbing is deterministic).
+// An event targets one or more shapes (shapeIds). Visibility over time, derived only from events (so scrubbing is deterministic).
 // Starts visible unless the shape's first event is Show. Returns 0..1 (fades over FADE after a change).
 function visAlpha(s, t) {
-  const evs = state.events.filter(e => e.shapeId === s.id).sort((a, b) => a.time - b.time);
+  const evs = state.events.filter(e => e.shapeIds.includes(s.id)).sort((a, b) => a.time - b.time);
   let vis = !(evs.length && evs[0].action === 'show'), since = -Infinity;
   for (const e of evs) {
     if (e.time > t) break;
@@ -103,13 +107,14 @@ function visAlpha(s, t) {
 }
 function deleteShape(id) {
   state.shapes = state.shapes.filter(s => s.id !== id);
-  state.events = state.events.filter(e => e.shapeId !== id);
+  state.events.forEach(e => e.shapeIds = e.shapeIds.filter(x => x !== id));
+  state.events = state.events.filter(e => e.shapeIds.length);   // an event with no shapes left does nothing
   if (state.sel === id) state.sel = null;
   state.selEvent = null;
 }
 function addEvent() {
   const s = sel(); if (!s || !audio.duration) return;
-  const e = { id: state.nextEv++, shapeId: s.id, time: +audio.currentTime.toFixed(2), action: 'toggle' };
+  const e = { id: state.nextEv++, shapeIds: [s.id], time: +audio.currentTime.toFixed(2), action: 'toggle' };
   state.events.push(e); state.selEvent = e.id; renderInspector();
 }
 const audio = new Audio();
@@ -407,7 +412,7 @@ $('load').onchange = async e => {
   try {
     const d = JSON.parse(await f.text());
     state.shapes = d.shapes; state.nextId = d.nextId || state.shapes.length + 1; state.sel = null;
-    state.events = d.events || []; state.nextEv = d.nextEv || state.events.length + 1; state.selEvent = null;
+    state.events = (d.events || []).map(e => e.shapeIds ? e : { ...e, shapeIds: [e.shapeId] }); state.nextEv = d.nextEv || state.events.length + 1; state.selEvent = null;
     renderInspector();
   } catch { alert('Could not read that file.'); }
 };
@@ -419,9 +424,11 @@ function renderMarkers() {
   const el = $('markers'), d = audio.duration;
   if (!d) { el.innerHTML = ''; return; }
   el.innerHTML = state.events.map(e => {
-    const s = state.shapes.find(x => x.id === e.shapeId); if (!s) return '';
-    return `<div class="mk${e.id === state.selEvent ? ' sel' : ''}${e.shapeId === state.sel ? ' mine' : ''}" data-id="${e.id}" ` +
-      `style="--c:${s.fill};left:${mkLeft(Math.min(e.time, d), d)}" title="${s.type} · ${e.action} · ${e.time.toFixed(1)}s"></div>`;
+    const ss = e.shapeIds.map(id => state.shapes.find(x => x.id === id)).filter(Boolean); if (!ss.length) return '';
+    const c = ss.length === 1 ? ss[0].fill : `linear-gradient(${ss.map(x => x.fill).join(',')})`;   // gradient of the shapes' colors
+    const what = ss.length === 1 ? ss[0].type : ss.length + ' shapes';
+    return `<div class="mk${e.id === state.selEvent ? ' sel' : ''}${e.shapeIds.includes(state.sel) ? ' mine' : ''}" data-id="${e.id}" ` +
+      `style="--c:${c};left:${mkLeft(Math.min(e.time, d), d)}" title="${what} · ${e.action} · ${e.time.toFixed(1)}s"></div>`;
   }).join('');
 }
 let mkDrag = null;
@@ -430,10 +437,10 @@ $('markers').addEventListener('pointerdown', ev => {
   const e = state.events.find(x => x.id === +m.dataset.id); if (!e) return;
   m.setPointerCapture(ev.pointerId);
   mkDrag = { e, m };
-  state.selEvent = e.id; state.sel = e.shapeId;
+  state.selEvent = e.id; if (!e.shapeIds.includes(state.sel)) state.sel = e.shapeIds[0];
   document.querySelectorAll('.mk').forEach(x => {
     const o = state.events.find(y => y.id === +x.dataset.id);
-    x.classList.toggle('sel', o === e); x.classList.toggle('mine', !!o && o.shapeId === e.shapeId);
+    x.classList.toggle('sel', o === e); x.classList.toggle('mine', !!o && o.shapeIds.includes(state.sel));
   });
   renderInspector(true);   // keep marker elements alive so the drag keeps its pointer capture
 });
@@ -453,7 +460,8 @@ function renderInspector(skipMarkers) {
   if (!skipMarkers) renderMarkers();
   const el = $('inspector'), s = sel();
   if (!s) { el.innerHTML = '<p class="dim">Click and drag on the canvas to draw freehand with the pen. Switch tools with the toolbar or V / P / R / E / T (Esc = Select) to place shapes or select and move them, then select a shape to edit it and bind it to the music.</p>'; return; }
-  const evs = s ? state.events.filter(e => e.shapeId === s.id).sort((a, b) => a.time - b.time) : [];
+  const evs = s ? state.events.filter(e => e.shapeIds.includes(s.id) || e.id === state.selEvent).sort((a, b) => a.time - b.time) : [];
+  const GLYPH = { path: '✎', rect: '▭', ellipse: '◯', triangle: '△' };
   const opt = (obj, cur) => (Array.isArray(obj) ? obj.map(k => [k, k]) : Object.entries(obj))
     .map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${v}</option>`).join('');
   el.innerHTML = `
@@ -480,9 +488,12 @@ function renderInspector(skipMarkers) {
         <input type="number" step="0.1" min="0" data-k="time" value="${e.time.toFixed(2)}"><span class="dim">s</span>
         <select data-k="action">${opt(EVENT_ACTIONS, e.action)}</select>
         <button data-rmev="${e.id}" title="Remove">×</button>
+        <div class="chips" title="Shapes this event affects">${state.shapes.map(x =>
+          `<button class="chip ${e.shapeIds.includes(x.id) ? 'inc' : ''}" data-chip="${x.id}" style="--c:${x.fill}" title="${x.type} #${x.id}">${GLYPH[x.type] || '?'}</button>`).join('')}
+          <button class="chip all" data-chip="all" title="All shapes">all</button></div>
       </div>`).join('')}
     <button id="i-addev" ${audio.duration ? '' : 'disabled title="Upload audio first"'}>+ Event at playhead (M)</button>
-    <p class="dim">Events show/hide this shape at moments in the song, drawn as lines on the timeline. Press M while playing to mark one. A shape whose first event is Show starts hidden.</p>`;
+    <p class="dim">Events show/hide shapes at moments in the song, drawn as lines on the timeline. Press M while playing to mark one for this shape, then tap other shapes' chips on the event to include them. A shape whose first event is Show starts hidden.</p>`;
   const bind = (id, fn) => $(id).oninput = e => fn(e.target);
   bind('i-fill', t => s.fill = t.value);
   if (s.pts) bind('i-lw', t => s.lw = Math.max(1, +t.value));
@@ -500,8 +511,15 @@ function renderInspector(skipMarkers) {
     const e = state.events.find(x => x.id === +row.dataset.ev);
     row.querySelector('[data-k=time]').oninput = ev => { e.time = Math.max(0, +ev.target.value || 0); renderMarkers(); };
     row.querySelector('[data-k=action]').oninput = ev => { e.action = ev.target.value; renderMarkers(); };
+    row.querySelectorAll('[data-chip]').forEach(ch => ch.onclick = () => {
+      const id = ch.dataset.chip;
+      if (id === 'all') e.shapeIds = state.shapes.map(x => x.id);
+      else if (e.shapeIds.includes(+id)) { if (e.shapeIds.length > 1) e.shapeIds = e.shapeIds.filter(x => x !== +id); }   // keep at least one
+      else e.shapeIds.push(+id);
+      state.selEvent = e.id; renderInspector();
+    });
     row.querySelector('[data-rmev]').onclick = () => { state.events = state.events.filter(x => x !== e); state.selEvent = null; renderInspector(); };
-    row.onclick = ev => { if (ev.target.tagName === 'DIV' || ev.target.tagName === 'SPAN') { state.selEvent = e.id; renderInspector(); } };
+    row.onclick = ev => { if (ev.target === row || ev.target.tagName === 'SPAN') { state.selEvent = e.id; renderInspector(); } };
   });
   $('i-addb').onclick = () => { s.bindings.push({ band: 'bass', prop: 'scale', amount: 0.5 }); renderInspector(); };
   el.querySelectorAll('.bind').forEach(div => {
