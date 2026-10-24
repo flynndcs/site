@@ -51,6 +51,13 @@
   h3 { margin:14px 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
   .row { display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap; }
   .row > span { width:56px; color:var(--dim); }
+  .transport { display:flex; gap:4px; align-items:center; }
+  .transport button { padding:5px 8px; min-width:34px; }
+  #tip { position:absolute; top:-26px; transform:translateX(-50%); background:#272a35; border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:11px; pointer-events:none; opacity:0; white-space:nowrap; z-index:6; }
+  #tip.show { opacity:1; }
+  #stage:fullscreen { background:#000; padding:0; }
+  #stage:fullscreen canvas { border:0; }
+  #stage:fullscreen #modelabel { display:none; }
   #timeline { flex:1; min-width:160px; height:30px; position:relative; }
   #seek { -webkit-appearance:none; appearance:none; background:transparent; width:100%; height:8px; margin:0; padding:0; position:absolute; left:0; top:11px; }
   #seek::-webkit-slider-runnable-track { height:4px; background:#2d303b; border-radius:2px; }
@@ -106,9 +113,24 @@
   <aside id="inspector"></aside>
 </main>
 <footer class="stage-only">
-  <button id="play" style="width:70px">Play</button>
-  <div id="timeline"><input id="seek" type="range" min="0" max="1000" value="0"><div id="markers"></div></div>
-  <span id="time" class="dim">0:00 / 0:00</span>
+  <div class="transport">
+    <button id="toStart" title="Back to the start (Home)">|&#9664;</button>
+    <button id="back10" title="Back 10 seconds (J)">&#9664;&#9664; 10</button>
+    <button id="play" class="primary" title="Play / pause (Space or K)" style="width:70px">Play</button>
+    <button id="fwd10" title="Forward 10 seconds (L)">10 &#9654;&#9654;</button>
+  </div>
+  <span id="time" class="dim" title="Current time / length">0:00 / 0:00</span>
+  <div id="timeline"><input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek"><div id="markers"></div><div id="tip"></div></div>
+  <div class="transport">
+    <button id="loop" title="Loop the track">Loop</button>
+    <select id="speed" title="Playback speed" aria-label="Playback speed">
+      <option value="0.5">0.5&times;</option><option value="0.75">0.75&times;</option><option value="1" selected>1&times;</option>
+      <option value="1.25">1.25&times;</option><option value="1.5">1.5&times;</option><option value="2">2&times;</option>
+    </select>
+    <button id="mute" title="Mute / unmute">&#128266;</button>
+    <input id="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume" style="width:80px">
+    <button id="fs" title="Present full screen (F)">Full screen</button>
+  </div>
 </footer>
 
 <script>
@@ -614,6 +636,13 @@ addEventListener('keydown', ev => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a' && !typing) {
     ev.preventDefault(); setTool('select'); state.selIds = state.shapes.map(s => s.id); state.selEvent = null; renderInspector();
   }
+  if (state.mode === 'stage' && !typing && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {   // transport shortcuts, as in a video player
+    const k = ev.key, K = k.toLowerCase();
+    const act = k === ' ' || K === 'k' ? togglePlay : K === 'j' ? () => seekBy(-10) : K === 'l' ? () => seekBy(10)
+      : k === 'ArrowLeft' ? () => seekBy(-5) : k === 'ArrowRight' ? () => seekBy(5)
+      : k === 'Home' ? () => seekTo(0) : k === 'End' ? () => seekTo(audio.duration || 0) : K === 'f' ? toggleFullscreen : null;
+    if (act) { ev.preventDefault(); if (!ev.repeat || /Arrow/.test(k)) act(); }
+  }
   if (ev.key.toLowerCase() === 'm' && !textEntry && !ev.ctrlKey && !ev.metaKey) {   // mark an event at the playhead
     ev.preventDefault(); if (!ev.repeat) addEvent();
   }
@@ -622,6 +651,9 @@ addEventListener('keydown', ev => {
     else deleteSelection();   // the whole selection
   }
 }, true);   // capture phase: nothing else on the page can swallow these keys
+addEventListener('keyup', ev => {   // Space on a focused button would otherwise "click" it again on key release
+  if (ev.key === ' ' && state.mode === 'stage' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) ev.preventDefault();
+}, true);
 
 // ---------- toolbar ----------
 const TOOLS = { workshop: ['select', 'pen', 'rect', 'ellipse', 'triangle'], stage: ['select', 'transform'] };
@@ -682,19 +714,46 @@ $('file').onchange = e => {
   $('fname').textContent = f.name; hasAudio = true;
   audio.onloadedmetadata = () => { updateTime(); renderInspector(); };
 };
-$('play').onclick = () => {
-  if (!hasAudio) return alert('Upload an audio file first.');
-  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
-};
+// ---------- transport: play/pause, skip, restart, loop, speed, volume, full screen ----------
+function needAudio() { if (hasAudio) return true; toast('Upload an audio file first'); return false; }
+function togglePlay() { if (!needAudio()) return; if (audio.paused) audio.play().catch(() => {}); else audio.pause(); }
+function seekTo(t) { if (!needAudio()) return; const d = audio.duration || 0; audio.currentTime = Math.min(Math.max(0, t), d || 0); updateTime(); }
+const seekBy = dt => seekTo(audio.currentTime + dt);
+$('play').onclick = togglePlay;
+$('toStart').onclick = () => seekTo(0);
+$('back10').onclick = () => seekBy(-10);
+$('fwd10').onclick = () => seekBy(10);
+$('loop').onclick = () => { audio.loop = !audio.loop; $('loop').classList.toggle('on', audio.loop); toast(audio.loop ? 'Looping on' : 'Looping off'); };
+$('speed').onchange = () => { audio.playbackRate = +$('speed').value; $('speed').blur(); toast(`Speed ${$('speed').value}x`); };
+function showVolume() { $('mute').innerHTML = audio.muted || audio.volume === 0 ? '&#128263;' : '&#128266;'; $('vol').value = audio.muted ? 0 : audio.volume; }
+$('vol').oninput = () => { audio.volume = +$('vol').value; audio.muted = audio.volume === 0; showVolume(); };
+$('mute').onclick = () => { audio.muted = !audio.muted; if (!audio.muted && audio.volume === 0) audio.volume = 0.5; showVolume(); };
+function toggleFullscreen() {
+  if (document.fullscreenElement) return document.exitFullscreen();
+  const el = $('stage');
+  if (!el.requestFullscreen || !document.fullscreenEnabled) return toast('Full screen is not available here');
+  el.requestFullscreen().then(() => toast('Space play/pause · J/L skip 10s · ←/→ 5s · Esc exits'), () => toast('Full screen is not available here'));
+}
+$('fs').onclick = toggleFullscreen;
 audio.onplay = () => $('play').textContent = 'Pause';
 audio.onpause = () => $('play').textContent = 'Play';
 audio.onended = () => $('play').textContent = 'Play';
+let seeking = false;
+$('seek').addEventListener('pointerdown', () => { seeking = true; });
+addEventListener('pointerup', () => { seeking = false; });
 $('seek').oninput = () => { if (audio.duration) audio.currentTime = $('seek').value / 1000 * audio.duration; };
+$('timeline').addEventListener('pointermove', ev => {   // hover: show the time under the pointer
+  const d = audio.duration, r = $('timeline').getBoundingClientRect(), tip = $('tip');
+  if (!d) return tip.classList.remove('show');
+  const f = Math.min(1, Math.max(0, (ev.clientX - r.left - MK_PAD) / (r.width - MK_PAD * 2)));
+  tip.textContent = fmt(f * d); tip.style.left = ev.clientX - r.left + 'px'; tip.classList.add('show');
+});
+$('timeline').addEventListener('pointerleave', () => $('tip').classList.remove('show'));
 const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 function updateTime() {
   const d = audio.duration || 0;
   $('time').textContent = `${fmt(audio.currentTime)} / ${fmt(d)}`;
-  if (d && document.activeElement !== $('seek')) $('seek').value = audio.currentTime / d * 1000;
+  if (d && !seeking) $('seek').value = audio.currentTime / d * 1000;
 }
 
 // ---------- project: save / load / autosave ----------
@@ -731,7 +790,7 @@ $('save').onclick = () => {
 };
 $('load').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  try { loadProject(JSON.parse(await f.text())); } catch { alert('Could not read that file.'); }
+  try { loadProject(JSON.parse(await f.text())); } catch { toast('Could not read that file'); }
 };
 // The whole project (library + stage) is kept in this browser and restored on reload. Normally that is localStorage; when the app
 // runs inside a sandboxed iframe (no storage access, e.g. embedded in a web page) it asks the host page to keep it via postMessage.
