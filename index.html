@@ -292,6 +292,7 @@
                     frame.onload = () => frame.focus();   // so keyboard shortcuts (M, V/P/R/E/T) reach the app without an extra click
                     frame.src = "/apps/music-shapes/index.html";
                 }
+                setTimeout(() => frame.focus(), 0);   // also when re-selecting the tab (the nav link would otherwise keep keyboard focus)
             } else if (frame.getAttribute("src")) {
                 frame.removeAttribute("src");
             }
