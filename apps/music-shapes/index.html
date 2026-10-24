@@ -200,6 +200,10 @@ function hueShift(hex, deg) {
 function draw() {
   const animate = !audio.paused;
   ctx.clearRect(0, 0, W, H);
+  if (!state.shapes.length && !drag) {
+    ctx.fillStyle = '#4a4e5c'; ctx.font = '20px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Click and drag to draw', W / 2, H / 2);
+  }
   for (const s of state.shapes) {
     const e = effective(s, animate);
     ctx.save();
@@ -411,13 +415,6 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
-// starter demo shapes
-(function seed() {
-  const a = makeShape('ellipse', 480, 270, 160, 160); a.fill = '#6c8cff'; a.bindings = [{ band: 'bass', prop: 'scale', amount: 0.8 }];
-  const b = makeShape('triangle', 240, 270, 120, 120); b.fill = '#ff6c8c'; b.bindings = [{ band: 'mid', prop: 'rotate', amount: 1 }];
-  const c = makeShape('rect', 720, 270, 120, 120); c.fill = '#6cffb0'; c.bindings = [{ band: 'treble', prop: 'y', amount: -1 }, { band: 'beat', prop: 'hue', amount: 1 }];
-  state.shapes.push(a, b, c);
-})();
 renderInspector();
 frame();
 </script>
