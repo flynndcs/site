@@ -12,6 +12,15 @@
   header { border-bottom:1px solid var(--line); }
   footer { border-top:1px solid var(--line); }
   main { display:grid; grid-template-columns:1fr 280px; min-height:0; }
+  #banner { position:absolute; left:50%; top:60px; transform:translateX(-50%); white-space:nowrap; background:#2a2140; border:1px solid #9b7bff; color:#e6e8ee; padding:6px 14px; border-radius:6px; z-index:4; display:none; }
+  #banner.show { display:block; }
+  .xfbar { position:absolute; top:12px; height:8px; border-radius:4px; opacity:.5; pointer-events:none; background:linear-gradient(to right, var(--a), var(--b)); }
+  .mk.xf::before { top:2px; left:1px; width:9px; height:9px; transform:rotate(45deg); border-radius:1px; }
+  .mk.xf::after { top:8px; }
+  .xfrow { border:1px solid var(--line); border-radius:6px; padding:6px; margin-bottom:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .xfrow.sel { border-color:#9b7bff; }
+  .xfrow input[type=number] { width:62px; }
+  .xfrow select { flex:1; min-width:70px; }
   #toast { position:absolute; left:50%; top:22px; transform:translateX(-50%); white-space:nowrap; background:#272a35; border:1px solid var(--accent); color:var(--text); padding:7px 14px; border-radius:6px; opacity:0; pointer-events:none; transition:opacity .15s; z-index:5; }
   #toast.show { opacity:1; }
   canvas:focus { outline:none; }
@@ -65,12 +74,13 @@
   <button data-tool="rect" title="Rectangle (R)">Rectangle</button>
   <button data-tool="ellipse" title="Ellipse (E)">Ellipse</button>
   <button data-tool="triangle" title="Triangle (T)">Triangle</button>
+  <button data-tool="transform" title="Transform: turn one shape into another over time (X)">Transform</button>
   <div class="sep"></div>
   <button id="save">Save JSON</button>
   <label class="file" style="background:#272a35">Load JSON<input id="load" type="file" accept="application/json" hidden></label>
 </header>
 <main>
-  <div id="stage"><canvas id="cv" width="960" height="540" tabindex="0"></canvas><div id="toast" role="status"></div></div>
+  <div id="stage"><canvas id="cv" width="960" height="540" tabindex="0"></canvas><div id="banner"></div><div id="toast" role="status"></div></div>
   <aside id="inspector"></aside>
 </main>
 <footer>
@@ -91,7 +101,8 @@ const state = {
   // `sel` is the id when exactly one shape is selected (inspector edits it); assigning it selects just that shape
   get sel() { return this.selIds.length === 1 ? this.selIds[0] : null; },
   set sel(v) { this.selIds = v == null ? [] : [v]; },
-  tool: 'pen', nextId: 1, events: [], selEvent: null, nextEv: 1 };
+  tool: 'pen', nextId: 1, events: [], selEvent: null, nextEv: 1,
+  transforms: [], nextXf: 1, selXf: null, pendingXf: null };   // a transform: shape `from` morphs into shape `to` between `start` and `end`
 const EVENT_ACTIONS = { toggle: 'Toggle visible', show: 'Show', hide: 'Hide' };
 const FADE = 0.15;   // seconds
 // An event targets one or more shapes (shapeIds). Visibility over time, derived only from events (so scrubbing is deterministic).
@@ -107,7 +118,120 @@ function visAlpha(s, t) {
   const k = Math.min(1, (t - since) / FADE);
   return vis ? k : 1 - k;
 }
+// ---------- transformations (shape A morphs into shape B over time) ----------
+const lerp = (a, b, k) => a + (b - a) * k;
+const smooth = k => k * k * (3 - 2 * k);
+const completeXfs = () => state.transforms.filter(x => x.to != null && x.end != null && x.end > x.start);
+// For shape s at time t: `mult` 0 when it is not part of the scene (a destination before its morph finishes, or a source after it),
+// and `morph` while s is turning into its target. The destination appears at the moment the morph completes (seamless: same form).
+function xfFactor(s, t) {
+  let mult = 1, morph = null;
+  for (const x of completeXfs()) {
+    if (x.to === s.id && t < x.end) mult = 0;
+    if (x.from === s.id) { if (t >= x.end) mult = 0; else if (t >= x.start) morph = { x, k: smooth((t - x.start) / (x.end - x.start)) }; }
+  }
+  return { mult, morph };
+}
+const XF_N = 200;
+function polyArea(P) { let a = 0; for (let i = 0; i < P.length; i++) { const q = P[(i + 1) % P.length]; a += P[i][0] * q[1] - q[0] * P[i][1]; } return a / 2; }
+function resample(P, n) {   // P is a closed polygon (implicitly joined last->first); n points evenly spaced by arc length
+  const Q = [...P, P[0]], cum = [0];
+  for (let i = 1; i < Q.length; i++) cum.push(cum[i - 1] + Math.hypot(Q[i][0] - Q[i - 1][0], Q[i][1] - Q[i - 1][1]));
+  const total = cum.at(-1) || 1, out = [];
+  for (let i = 0, j = 1; i < n; i++) {
+    const d = i / n * total;
+    while (j < Q.length - 1 && cum[j] < d) j++;
+    const seg = cum[j] - cum[j - 1] || 1, f = (d - cum[j - 1]) / seg;
+    out.push([lerp(Q[j - 1][0], Q[j][0], f), lerp(Q[j - 1][1], Q[j][1], f)]);
+  }
+  return out;
+}
+// n points on the boundary of a polygon that is star-shaped about the origin, one per ray starting at the top and going clockwise.
+// Matching shapes ray-by-ray makes in-betweens of convex shapes smooth and convex (arc-length matching pinches the sides).
+function radialSample(P, n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI / 2 + i / n * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
+    let best = 0;
+    for (let j = 0; j < P.length; j++) {
+      const A = P[j], B = P[(j + 1) % P.length], ex = B[0] - A[0], ey = B[1] - A[1], den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const r = (A[0] * ey - A[1] * ex) / den, u = (A[0] * dy - A[1] * dx) / den;
+      if (r > best && u >= -1e-9 && u <= 1 + 1e-9) best = r;
+    }
+    out.push([dx * best, dy * best]);
+  }
+  return out;
+}
+// A shape as a closed, clockwise polygon of XF_N points around its centre, starting at its top: points correspond between any two shapes.
+function outline(s) {
+  const w = s.w / 2, h = s.h / 2;
+  let P, verts = null, spin = true;
+  if (s.type === 'rect') P = verts = [[-w, -h], [w, -h], [w, h], [-w, h]];
+  else if (s.type === 'triangle') P = verts = [[0, -h], [w, h], [-w, h]];
+  else if (s.type === 'ellipse') { P = []; for (let i = 0; i < 128; i++) { const a = -Math.PI / 2 + i / 128 * Math.PI * 2; P.push([Math.cos(a) * w, Math.sin(a) * h]); } }
+  else {   // freehand: a (roughly) closed loop is used as a polygon; an open stroke goes out and back so it looks the same and has no closing line
+    const L = toLocalPts(s), gap = Math.hypot(L[0][0] - L.at(-1)[0], L[0][1] - L.at(-1)[1]);
+    if (gap <= Math.max(20, 0.15 * Math.max(s.w, s.h))) P = L; else { P = [...L, ...L.slice(1, -1).reverse()]; spin = false; }
+  }
+  if (spin && polyArea(P) < 0) P = [...P].reverse();
+  let R = s.type === 'path' ? resample(P, XF_N) : radialSample(P, XF_N);
+  if (verts) for (const v of verts) {   // snap to the true corners so rectangles/triangles stay sharp
+    let bi = 0, bd = Infinity; R.forEach((q, i) => { const d = Math.hypot(q[0] - v[0], q[1] - v[1]); if (d < bd) { bd = d; bi = i; } });
+    R[bi] = [v[0], v[1]];
+  }
+  if (spin && s.type === 'path') {   // freehand loops: start at the top-centre so shapes line up with each other
+    let bi = 0, bv = Infinity; R.forEach((q, i) => { const v = q[1] + 0.001 * Math.abs(q[0]); if (v < bv) { bv = v; bi = i; } });
+    R = [...R.slice(bi), ...R.slice(0, bi)];
+  }
+  return R;
+}
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mixColor = (a, b, k) => { const A = hexRgb(a), B = hexRgb(b); return `rgb(${A.map((v, i) => Math.round(lerp(v, B[i], k))).join(',')})`; };
+const angDiff = (a, b) => ((b - a + 540) % 360) - 180;
+function drawMorph(A, B, k, t, playing) {
+  const pa = outline(A), pb = outline(B), pt = pa.map((q, i) => [lerp(q[0], pb[i][0], k), lerp(q[1], pb[i][1], k)]);
+  const va = lerp(visAlpha(A, t), visAlpha(B, t), k), alpha = lerp(A.opacity, B.opacity, k) * (va + (1 - va) * (playing ? 0.12 : 0.25));
+  const fillK = lerp(A.type === 'path' ? 0 : 1, B.type === 'path' ? 0 : 1, k), strokeK = lerp(A.type === 'path' ? 1 : 0, B.type === 'path' ? 1 : 0, k);
+  const lw = lerp(A.type === 'path' ? A.lw : 0, B.type === 'path' ? B.lw : 0, k);
+  ctx.save();
+  ctx.translate(lerp(A.x, B.x, k), lerp(A.y, B.y, k)); ctx.rotate((A.rot + angDiff(A.rot, B.rot) * k) * Math.PI / 180);
+  ctx.beginPath(); pt.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.closePath();
+  const col = mixColor(A.fill, B.fill, k);
+  if (fillK > 0.01) { ctx.globalAlpha = alpha * fillK; ctx.fillStyle = col; ctx.fill(); }
+  if (strokeK > 0.01 && lw > 0.2) { ctx.globalAlpha = alpha * strokeK; ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.lineJoin = ctx.lineCap = 'round'; ctx.stroke(); }
+  ctx.restore();
+}
+function pendingXf() { return state.transforms.find(x => x.id === state.pendingXf); }
+function cancelPendingXf() { state.transforms = state.transforms.filter(x => x.id !== state.pendingXf); state.pendingXf = null; updateBanner(); renderInspector(); }
+function updateBanner() {
+  const b = $('banner'), x = pendingXf();
+  const msg = state.tool !== 'transform' ? '' : !x ? 'Transform: click the shape that should start changing (at the playhead)'
+    : x.to == null ? 'Now click the shape it should turn into  ·  Esc cancels' : 'Click anywhere to stop the transformation here  ·  Esc cancels';
+  b.textContent = msg; b.classList.toggle('show', !!msg);
+}
+// Transform tool: 1) click shape A = start at the playhead, 2) click the shape it becomes, 3) click anywhere = stop at the playhead
+function transformClick(p) {
+  if (!audio.duration) return toast('Upload audio first');
+  const h = hit(p, true), t = +audio.currentTime.toFixed(2), x = pendingXf();
+  if (!x) {
+    if (!h) return toast('Click the shape that should start changing');
+    const nx = { id: state.nextXf++, from: h.id, to: null, start: t, end: null };
+    state.transforms.push(nx); state.pendingXf = nx.id; state.selXf = nx.id; state.sel = h.id;
+    state.flash = { ids: [h.id], action: 'start', t0: performance.now() };
+  } else if (x.to == null) {
+    if (!h || h.id === x.from) return toast('Click a different shape: the one it should turn into');
+    x.to = h.id; state.flash = { ids: [h.id], action: 'target', t0: performance.now() };
+  } else {
+    x.end = Math.max(t, +(x.start + 0.3).toFixed(2)); state.pendingXf = null; state.selXf = x.id;
+    state.flash = { ids: [x.from, x.to], action: 'stop', t0: performance.now() };
+    toast(`Transformation ${x.start.toFixed(1)}s to ${x.end.toFixed(1)}s`);
+  }
+  updateBanner(); renderInspector();
+}
 function deleteShape(id) {
+  state.transforms = state.transforms.filter(x => x.from !== id && x.to !== id);
+  if (state.pendingXf && !pendingXf()) { state.pendingXf = null; updateBanner(); }
   state.shapes = state.shapes.filter(s => s.id !== id);
   state.events.forEach(e => e.shapeIds = e.shapeIds.filter(x => x !== id));
   state.events = state.events.filter(e => e.shapeIds.length);   // an event with no shapes left does nothing
@@ -211,7 +335,9 @@ function draw() {
   }
   for (const s of state.shapes) {
     // hidden shapes stay as faint ghosts (25% paused, 12% playing) so they can still be edited / clicked to mark their next event
-    const va = visAlpha(s, t);
+    const { mult, morph } = xfFactor(s, t);
+    if (morph) { const B = state.shapes.find(x => x.id === morph.x.to); if (B) { drawMorph(s, B, morph.k, t, playing); continue; } }
+    const va = visAlpha(s, t) * mult;
     ctx.save();
     ctx.translate(s.x, s.y); ctx.rotate(s.rot * Math.PI / 180);
     ctx.globalAlpha = s.opacity * (va + (1 - va) * (playing ? 0.12 : 0.25));
@@ -319,6 +445,7 @@ cv.addEventListener('pointerdown', ev => {
   try { cv.setPointerCapture(ev.pointerId); } catch {}   // must never abort the handler
   const p = pos(ev);
   state.selEvent = null;
+  if (state.tool === 'transform') { transformClick(p); return; }
   if (playing) {   // while the track plays: click a shape to mark its next event right now; drag a box to mark a group on release
     const h = hit(p, true);
     console.debug('[click]', { x: Math.round(p.x), y: Math.round(p.y), hit: h ? h.id : null, time: audio.currentTime });
@@ -405,14 +532,14 @@ function toast(msg) {
   const el = $('toast'); el.textContent = msg; el.classList.add('show');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
 }
-const KEYS = { v: 'select', p: 'pen', r: 'rect', e: 'ellipse', t: 'triangle' };
+const KEYS = { v: 'select', p: 'pen', r: 'rect', e: 'ellipse', t: 'triangle', x: 'transform' };
 addEventListener('keydown', ev => {
   const ae = document.activeElement, tag = ae.tagName;
   // only text-entry controls swallow shortcuts (a focused slider/button/colour picker must not)
   const textEntry = tag === 'TEXTAREA' || ae.isContentEditable || (tag === 'INPUT' && !/^(range|color|checkbox|radio|file|button)$/.test(ae.type));
   const typing = textEntry || tag === 'SELECT';   // dropdowns also keep letter keys for their own type-ahead
   if (!typing && !ev.ctrlKey && !ev.metaKey) {
-    if (ev.key === 'Escape') setTool('select');
+    if (ev.key === 'Escape') { if (state.pendingXf) cancelPendingXf(); else setTool('select'); }
     else if (KEYS[ev.key.toLowerCase()]) setTool(KEYS[ev.key.toLowerCase()]);
   }
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a' && !typing) {
@@ -429,7 +556,8 @@ addEventListener('keydown', ev => {
 
 // ---------- toolbar ----------
 function setTool(t) {
-  state.tool = t;
+  if (t !== 'transform' && state.pendingXf) cancelPendingXf();
+  state.tool = t; updateBanner();
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
 }
 document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
@@ -457,7 +585,7 @@ function updateTime() {
 
 $('save').onclick = () => {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify({ shapes: state.shapes, nextId: state.nextId, events: state.events, nextEv: state.nextEv }, null, 2)], { type: 'application/json' }));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ shapes: state.shapes, nextId: state.nextId, events: state.events, nextEv: state.nextEv, transforms: completeXfs(), nextXf: state.nextXf }, null, 2)], { type: 'application/json' }));
   a.download = 'design.json'; a.click();
 };
 $('load').onchange = async e => {
@@ -466,6 +594,7 @@ $('load').onchange = async e => {
     const d = JSON.parse(await f.text());
     state.shapes = d.shapes; state.nextId = d.nextId || state.shapes.length + 1; state.sel = null;
     state.events = (d.events || []).map(e => e.shapeIds ? e : { ...e, shapeIds: [e.shapeId] }); state.nextEv = d.nextEv || state.events.length + 1; state.selEvent = null;
+    state.transforms = (d.transforms || []).filter(x => x.to != null && x.end != null); state.nextXf = d.nextXf || state.transforms.length + 1; state.selXf = state.pendingXf = null; updateBanner();
     renderInspector();
   } catch { alert('Could not read that file.'); }
 };
@@ -482,11 +611,26 @@ function renderMarkers() {
     const what = ss.length === 1 ? ss[0].type : ss.length + ' shapes';
     return `<div class="mk${e.id === state.selEvent ? ' sel' : ''}${e.shapeIds.some(id => state.selIds.includes(id)) ? ' mine' : ''}" data-id="${e.id}" ` +
       `style="--c:${c};left:${mkLeft(Math.min(e.time, d), d)}" title="${what} · ${e.action} · ${e.time.toFixed(1)}s"></div>`;
+  }).join('') + state.transforms.map(x => {
+    const A = state.shapes.find(q => q.id === x.from), B = state.shapes.find(q => q.id === x.to); if (!A) return '';
+    const sel = x.id === state.selXf ? ' sel' : '', mine = state.selIds.includes(x.from) || state.selIds.includes(x.to) ? ' mine' : '';
+    const handle = (edge, time, col, label) => `<div class="mk xf${sel}${mine}" data-xf="${x.id}" data-edge="${edge}" style="--c:${col};left:${mkLeft(Math.min(time, d), d)}" title="${label} ${time.toFixed(1)}s"></div>`;
+    return (x.end != null ? `<div class="xfbar" data-xfbar="${x.id}" style="--a:${A.fill};--b:${(B || A).fill};left:${mkLeft(x.start, d)};width:calc((100% - ${MK_PAD * 2}px) * ${(Math.min(x.end, d) - x.start) / d})"></div>` : '') +
+      handle('start', x.start, A.fill, 'transformation starts') + (x.end != null ? handle('end', x.end, (B || A).fill, 'transformation ends') : '');
   }).join('');
 }
 let mkDrag = null;
 $('markers').addEventListener('pointerdown', ev => {
   const m = ev.target.closest('.mk'); if (!m) return;
+  if (m.dataset.xf) {   // a transformation's start/end diamond
+    const x = state.transforms.find(q => q.id === +m.dataset.xf); if (!x) return;
+    m.setPointerCapture(ev.pointerId);
+    mkDrag = { xf: x, edge: m.dataset.edge, m };
+    state.selXf = x.id; state.selEvent = null; state.sel = x.from;
+    document.querySelectorAll('.mk').forEach(q => q.classList.toggle('sel', q.dataset.xf === String(x.id)));
+    renderInspector(true);
+    return;
+  }
   const e = state.events.find(x => x.id === +m.dataset.id); if (!e) return;
   m.setPointerCapture(ev.pointerId);
   mkDrag = { e, m };
@@ -501,7 +645,18 @@ $('markers').addEventListener('pointermove', ev => {
   if (!mkDrag || !audio.duration) return;
   const r = $('timeline').getBoundingClientRect();
   const f = Math.min(1, Math.max(0, (ev.clientX - r.left - MK_PAD) / (r.width - MK_PAD * 2)));
-  mkDrag.e.time = +(f * audio.duration).toFixed(2);
+  const d = audio.duration, tm = +(f * d).toFixed(2);
+  if (mkDrag.xf) {
+    const x = mkDrag.xf;
+    if (mkDrag.edge === 'start') x.start = x.end != null ? Math.min(tm, x.end - 0.1) : tm; else x.end = Math.max(tm, x.start + 0.1);
+    mkDrag.m.style.left = mkLeft(mkDrag.edge === 'start' ? x.start : x.end, d);
+    const bar = document.querySelector(`[data-xfbar="${x.id}"]`);
+    if (bar && x.end != null) { bar.style.left = mkLeft(x.start, d); bar.style.width = `calc((100% - ${MK_PAD * 2}px) * ${(x.end - x.start) / d})`; }
+    const row = document.querySelector(`.xfrow[data-xf="${x.id}"]`);
+    if (row) { row.querySelector('[data-k=start]').value = x.start.toFixed(2); if (x.end != null) row.querySelector('[data-k=end]').value = x.end.toFixed(2); }
+    return;
+  }
+  mkDrag.e.time = tm;
   mkDrag.m.style.left = mkLeft(mkDrag.e.time, audio.duration);
   const inp = document.querySelector(`.evrow[data-ev="${mkDrag.e.id}"] [data-k=time]`);
   if (inp) inp.value = mkDrag.e.time.toFixed(2);
@@ -528,7 +683,7 @@ function renderInspector(skipMarkers) {
     };
     return;
   }
-  if (!s) { el.innerHTML = '<p class="dim">Click and drag on the canvas to draw freehand with the pen. Switch tools with the toolbar or V / P / R / E / T (Esc = Select). With Select, click a shape to edit it, or drag a box (shift to add) to select several and move or delete them together. Then upload a track and press Play: click shapes as the music plays to mark when they appear and disappear.</p>'; return; }
+  if (!s) { el.innerHTML = '<p class="dim">Click and drag on the canvas to draw freehand with the pen. Switch tools with the toolbar or V / P / R / E / T (Esc = Select). With Select, click a shape to edit it, or drag a box (shift to add) to select several and move or delete them together. Then upload a track and press Play: click shapes as the music plays to mark when they appear and disappear. The Transform tool (X) turns one shape into another over time.</p>'; return; }
   const evs = s ? state.events.filter(e => e.shapeIds.includes(s.id) || e.id === state.selEvent).sort((a, b) => a.time - b.time) : [];
   const GLYPH = { path: '✎', rect: '▭', ellipse: '◯', triangle: '△' };
   const opt = (obj, cur) => (Array.isArray(obj) ? obj.map(k => [k, k]) : Object.entries(obj))
@@ -554,6 +709,30 @@ function renderInspector(skipMarkers) {
       </div>`).join('')}
     <button id="i-addev" ${audio.duration ? '' : 'disabled title="Upload audio first"'}>+ Event at playhead (M)</button>
     <p class="dim">Events show/hide shapes at moments in the song, drawn as lines on the timeline. While the track plays, click a shape to mark it right then: the first click shows it, the next hides it, and so on (change an event with its dropdown). Drag a box to mark a group at once, or tap other shapes' chips on an event to include them. M marks the selected shapes. A shape whose first event is Show starts hidden.</p>`;
+  // transformations involving this shape
+  const xfs = state.transforms.filter(x => x.from === s.id || x.to === s.id || x.id === state.selXf);
+  const shapeLabel = q => `${GLYPH[q.type] || '?'} #${q.id}`;
+  el.insertAdjacentHTML('beforeend', `
+    <h3>Transformations</h3>
+    ${xfs.map(x => { const A = state.shapes.find(q => q.id === x.from), B = state.shapes.find(q => q.id === x.to); return `
+      <div class="xfrow ${x.id === state.selXf ? 'sel' : ''}" data-xf="${x.id}">
+        <span title="turns into">${A ? shapeLabel(A) : '?'} &rarr;</span>
+        <select data-k="to">${x.to == null ? '<option value="">(pick the target)</option>' : ''}${state.shapes.filter(q => q.id !== x.from).map(q => `<option value="${q.id}" ${q.id === x.to ? 'selected' : ''}>${shapeLabel(q)} ${q.type}</option>`).join('')}</select>
+        <button data-rmxf="${x.id}" title="Remove">×</button>
+        <input type="number" step="0.1" min="0" data-k="start" value="${x.start.toFixed(2)}"><span class="dim">to</span>
+        <input type="number" step="0.1" min="0" data-k="end" value="${x.end != null ? x.end.toFixed(2) : ''}" ${x.end == null ? 'placeholder="…"' : ''}><span class="dim">s</span>
+      </div>`; }).join('')}
+    <button id="i-addxf">Transform tool (X)</button>
+    <p class="dim">Turn this shape into another over time: with the Transform tool click the shape at the moment it should start changing, click the shape it becomes, then click anywhere to stop. The destination appears as the change finishes.</p>`);
+  $('i-addxf').onclick = () => { setTool('transform'); };
+  el.querySelectorAll('.xfrow').forEach(row => {
+    const x = state.transforms.find(q => q.id === +row.dataset.xf);
+    row.querySelector('[data-k=start]').oninput = ev => { x.start = Math.max(0, +ev.target.value || 0); if (x.end != null && x.end <= x.start) x.end = x.start + 0.1; renderMarkers(); };
+    row.querySelector('[data-k=end]').oninput = ev => { const v = +ev.target.value; if (v > x.start) { x.end = v; renderMarkers(); } };
+    row.querySelector('[data-k=to]').oninput = ev => { x.to = +ev.target.value || null; renderMarkers(); };
+    row.querySelector('[data-rmxf]').onclick = () => { if (x.id === state.pendingXf) state.pendingXf = null; state.transforms = state.transforms.filter(q => q !== x); state.selXf = null; updateBanner(); renderInspector(); };
+    row.onclick = ev => { if (ev.target === row || ev.target.tagName === 'SPAN') { state.selXf = x.id; renderInspector(); } };
+  });
   const bind = (id, fn) => $(id).oninput = e => fn(e.target);
   bind('i-fill', t => s.fill = t.value);
   if (s.pts) bind('i-lw', t => s.lw = Math.max(1, +t.value));
