@@ -256,6 +256,12 @@ function draw() {
         ctx.restore();
       }
     }
+    if (state.ripple) {   // where a click missed
+      const k = (performance.now() - state.ripple.t0) / 600;
+      if (k >= 1) state.ripple = null;
+      else { ctx.save(); ctx.globalAlpha = 1 - k; ctx.strokeStyle = '#ff9d4d'; ctx.lineWidth = 3; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(state.ripple.x, state.ripple.y, 8 + k * 34, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); }
+    }
     if (drag && drag.mode === 'marquee') {
       const [x0, y0, x1, y1] = marqueeRect(drag);
       ctx.fillStyle = 'rgba(108,140,255,.12)'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
@@ -273,7 +279,15 @@ function local(s, p) {   // world -> shape local space
   const a = -s.rot * Math.PI / 180, dx = p.x - s.x, dy = p.y - s.y;
   return { x: dx * Math.cos(a) - dy * Math.sin(a), y: dx * Math.sin(a) + dy * Math.cos(a) };
 }
-function hit(p) {
+// Which shape is under the point? Precise by default. With `forgiving` (used while marking during playback)
+// clicking inside a closed freehand loop, or anywhere in an open squiggle's bounds, also counts.
+function inPoly(P, x, y) {
+  let c = false;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++)
+    if ((P[i][1] > y) !== (P[j][1] > y) && x < (P[j][0] - P[i][0]) * (y - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0]) c = !c;
+  return c;
+}
+function hit(p, forgiving) {
   for (let i = state.shapes.length - 1; i >= 0; i--) {
     const s = state.shapes[i], l = local(s, p);
     if (s.type === 'path') {
@@ -283,18 +297,31 @@ function hit(p) {
     }
     if (Math.abs(l.x) <= s.w / 2 && Math.abs(l.y) <= s.h / 2) return s;
   }
-  return null;
+  if (!forgiving) return null;
+  for (let i = state.shapes.length - 1; i >= 0; i--) {   // inside a (roughly) closed loop
+    const s = state.shapes[i]; if (s.type !== 'path') continue;
+    const P = toLocalPts(s), l = local(s, p), gap = Math.hypot(P[0][0] - P.at(-1)[0], P[0][1] - P.at(-1)[1]);
+    if (gap <= Math.max(30, 0.35 * Math.max(s.w, s.h)) && inPoly(P, l.x, l.y)) return s;
+  }
+  let best = null, area = Infinity;   // otherwise anywhere in a squiggle's padded bounds; the smallest one wins
+  for (const s of state.shapes) {
+    if (s.type !== 'path') continue;
+    const l = local(s, p);
+    if (Math.abs(l.x) <= s.w / 2 + 12 && Math.abs(l.y) <= s.h / 2 + 12 && s.w * s.h < area) { area = s.w * s.h; best = s; }
+  }
+  return best;
 }
 let drag = null;
 const marqueeRect = d => [Math.min(d.start.x, d.cur.x), Math.min(d.start.y, d.cur.y), Math.max(d.start.x, d.cur.x), Math.max(d.start.y, d.cur.y)];
 cv.addEventListener('pointerdown', ev => {
   const playing = !audio.paused;
   try { window.focus(); cv.focus({ preventScroll: true }); } catch {}   // make sure keystrokes (M, V/P/R/E/T) go to this document, e.g. inside an iframe
-  cv.setPointerCapture(ev.pointerId);
+  try { cv.setPointerCapture(ev.pointerId); } catch {}   // must never abort the handler
   const p = pos(ev);
   state.selEvent = null;
   if (playing) {   // while the track plays: click a shape to mark its next event right now; drag a box to mark a group on release
-    const h = hit(p);
+    const h = hit(p, true);
+    console.debug('[click]', { x: Math.round(p.x), y: Math.round(p.y), hit: h ? h.id : null, time: audio.currentTime });
     if (h) { state.sel = h.id; addEvent(); return; }
     state.selIds = []; drag = { mode: 'marquee', start: p, cur: p, base: [] };
     return renderInspector();
@@ -363,7 +390,13 @@ addEventListener('pointerup', () => {
     const s = sel();
     if (s && (s.w < 6 || s.h < 6)) { s.w = 120; s.h = 120; }   // plain click => default size
   }
-  if (drag && drag.mode === 'marquee' && !audio.paused && state.selIds.length) addEvent();   // box released during playback => one event for the group
+  if (drag && drag.mode === 'marquee' && !audio.paused) {
+    if (state.selIds.length) addEvent();
+    else if (Math.hypot(drag.cur.x - drag.start.x, drag.cur.y - drag.start.y) < 6) {   // a plain click that hit nothing
+      state.ripple = { x: drag.start.x, y: drag.start.y, t0: performance.now() };
+      toast('Missed: no shape there. Click on a shape (hidden ones are faint ghosts), or drag a box');
+    }
+  }   // box released during playback => one event for the group
   if (drag) renderInspector();
   drag = null;
 });
