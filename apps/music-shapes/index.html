@@ -122,15 +122,22 @@ function deleteShape(id) {
   state.selIds = state.selIds.filter(x => x !== id);
   state.selEvent = null;
 }
+// New events alternate: Show by default, but Hide when the shape's previous event was Show.
+// (For a group, Hide only if every shape's previous event was Show.)
+function defaultAction(shapeIds, time) {
+  const last = id => state.events.filter(e => e.shapeIds.includes(id) && e.time <= time).sort((a, b) => b.time - a.time)[0];
+  return shapeIds.every(id => (last(id) || {}).action === 'show') ? 'hide' : 'show';
+}
 function addEvent() {
   console.debug('[M] addEvent', { selected: state.selIds.length, duration: audio.duration, time: audio.currentTime, playing: !audio.paused, focus: document.hasFocus(), active: document.activeElement && document.activeElement.tagName });
   if (!audio.duration) return toast('Upload audio first');
   if (!state.selIds.length) return toast('Select a shape first, then press M');
   // with several shapes selected, one event covers them all
-  const e = { id: state.nextEv++, shapeIds: [...state.selIds], time: +audio.currentTime.toFixed(2), action: 'toggle' };
+  const time = +audio.currentTime.toFixed(2), shapeIds = [...state.selIds];
+  const e = { id: state.nextEv++, shapeIds, time, action: defaultAction(shapeIds, time) };
   state.events.push(e); state.selEvent = e.id; renderInspector();
   const mk = document.querySelector(`.mk[data-id="${e.id}"]`); if (mk) mk.classList.add('flash');
-  toast(`Event added at ${e.time.toFixed(1)}s · ${e.shapeIds.length === 1 ? '1 shape' : e.shapeIds.length + ' shapes'}`);
+  toast(`Event added at ${e.time.toFixed(1)}s: ${e.action} · ${e.shapeIds.length === 1 ? '1 shape' : e.shapeIds.length + ' shapes'}`);
 }
 const audio = new Audio();
 audio.crossOrigin = 'anonymous';
@@ -593,7 +600,7 @@ function renderInspector(skipMarkers) {
           <button class="chip all" data-chip="all" title="All shapes">all</button></div>
       </div>`).join('')}
     <button id="i-addev" ${audio.duration ? '' : 'disabled title="Upload audio first"'}>+ Event at playhead (M)</button>
-    <p class="dim">Events show/hide shapes at moments in the song, drawn as lines on the timeline. Press M while playing to mark one for this shape, then tap other shapes' chips on the event to include them. A shape whose first event is Show starts hidden.</p>`;
+    <p class="dim">Events show/hide shapes at moments in the song, drawn as lines on the timeline. Press M while playing to mark one for this shape: it shows the shape, then the next one hides it, and so on (change with the dropdown). Tap other shapes' chips on an event to include them. A shape whose first event is Show starts hidden.</p>`;
   const bind = (id, fn) => $(id).oninput = e => fn(e.target);
   bind('i-fill', t => s.fill = t.value);
   if (s.pts) bind('i-lw', t => s.lw = Math.max(1, +t.value));
