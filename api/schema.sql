@@ -48,3 +48,6 @@ CREATE TABLE IF NOT EXISTS orders (
 
 -- Hidden until you flip it on
 INSERT OR IGNORE INTO flags (name, enabled) VALUES ('store', 0);
+
+-- Music Shapes tab: hidden until you flip it on
+INSERT OR IGNORE INTO flags (name, enabled) VALUES ('shapes', 0);
