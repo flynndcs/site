@@ -40,10 +40,10 @@
   <label class="file">Upload audio<input id="file" type="file" accept="audio/*" hidden></label>
   <span id="fname" class="dim">no file</span>
   <div class="sep"></div>
-  <button data-tool="select" class="on">Select</button>
-  <button data-tool="rect">Rectangle</button>
-  <button data-tool="ellipse">Ellipse</button>
-  <button data-tool="triangle">Triangle</button>
+  <button data-tool="select" title="Select / move (V)">Select</button>
+  <button data-tool="rect" class="on" title="Rectangle (R)">Rectangle</button>
+  <button data-tool="ellipse" title="Ellipse (E)">Ellipse</button>
+  <button data-tool="triangle" title="Triangle (T)">Triangle</button>
   <div class="sep"></div>
   <button id="save">Save JSON</button>
   <label class="file" style="background:#272a35">Load JSON<input id="load" type="file" accept="application/json" hidden></label>
@@ -68,13 +68,13 @@ const $ = id => document.getElementById(id);
 const BANDS = ['bass', 'mid', 'treble', 'level', 'beat'];
 const PROPS = { scale:'Scale', rotate:'Rotate', opacity:'Opacity', x:'Offset X', y:'Offset Y', hue:'Hue shift' };
 
-const state = { shapes: [], sel: null, tool: 'select', nextId: 1 };
+const state = { shapes: [], sel: null, tool: 'rect', nextId: 1 };
 const audio = new Audio();
 audio.crossOrigin = 'anonymous';
 let actx, analyser, freq, hasAudio = false;
 const bands = { bass:0, mid:0, treble:0, level:0, beat:0 };
 let bassAvg = 0;
-const peaks = {};
+const peaks = {}, lows = {};
 
 // ---------- audio ----------
 function initAudio() {
@@ -96,11 +96,13 @@ function avgRange(lo, hi) {
 function updateBands() {
   if (!analyser || audio.paused) { for (const k of BANDS) bands[k] *= 0.9; return; }
   analyser.getByteFrequencyData(freq);
-  // normalize each band against its own slowly-decaying peak so quiet bands (treble) still move
-  for (const [k, lo, hi] of [['bass', 20, 150], ['mid', 150, 2000], ['treble', 2000, 10000], ['level', 20, 16000]]) {
+  // normalize each band to its own recent dynamic range so quiet bands (treble) and steady music still move
+  for (const [k, lo, hi] of [['bass', 20, 150], ['mid', 150, 1500], ['treble', 1500, 8000], ['level', 20, 16000]]) {
     const raw = avgRange(lo, hi);
-    peaks[k] = Math.max(raw, (peaks[k] || 0) * 0.998, 0.02);
-    bands[k] = Math.min(1, raw / peaks[k]);
+    // floor drops instantly to quiet moments and creeps up; peak decays toward the floor
+    lows[k] = raw < (lows[k] ?? raw) ? raw : (lows[k] ?? raw) + (raw - (lows[k] ?? raw)) * 0.003;
+    peaks[k] = Math.max(raw, lows[k] + ((peaks[k] ?? raw) - lows[k]) * 0.997);
+    bands[k] = Math.min(1, Math.max(0, (raw - lows[k]) / Math.max(peaks[k] - lows[k], 0.01)));
   }
   bassAvg += (bands.bass - bassAvg) * 0.05;
   const hit = Math.max(0, bands.bass - bassAvg - 0.04) * 6;
@@ -225,12 +227,16 @@ addEventListener('pointerup', () => {
   if (drag && drag.mode === 'create') {
     const s = sel();
     if (s && (s.w < 6 || s.h < 6)) { s.w = 120; s.h = 120; }   // plain click => default size
-    setTool('select');
   }
   if (drag) renderInspector();
   drag = null;
 });
+const KEYS = { v: 'select', r: 'rect', e: 'ellipse', t: 'triangle' };
 addEventListener('keydown', ev => {
+  if (!/INPUT|SELECT/.test(document.activeElement.tagName) && !ev.ctrlKey && !ev.metaKey) {
+    if (ev.key === 'Escape') setTool('select');
+    else if (KEYS[ev.key.toLowerCase()]) setTool(KEYS[ev.key.toLowerCase()]);
+  }
   if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel() && !/INPUT|SELECT/.test(document.activeElement.tagName)) {
     state.shapes = state.shapes.filter(s => s.id !== state.sel); state.sel = null; renderInspector();
   }
@@ -283,7 +289,7 @@ $('load').onchange = async e => {
 // ---------- inspector ----------
 function renderInspector() {
   const el = $('inspector'), s = sel();
-  if (!s) { el.innerHTML = '<p class="dim">Pick a tool and drag on the canvas to draw a shape (or click for a default size). Select a shape to edit it and bind it to the music.</p>'; return; }
+  if (!s) { el.innerHTML = '<p class="dim">Drag on the canvas to draw a shape (or click for a default size). Switch tools with the toolbar or V / R / E / T (Esc = Select), then select a shape to edit it and bind it to the music.</p>'; return; }
   const opt = (obj, cur) => (Array.isArray(obj) ? obj.map(k => [k, k]) : Object.entries(obj))
     .map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${v}</option>`).join('');
   el.innerHTML = `
