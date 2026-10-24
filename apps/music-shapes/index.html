@@ -41,7 +41,8 @@
   <span id="fname" class="dim">no file</span>
   <div class="sep"></div>
   <button data-tool="select" title="Select / move (V)">Select</button>
-  <button data-tool="rect" class="on" title="Rectangle (R)">Rectangle</button>
+  <button data-tool="pen" class="on" title="Pen: click and drag to draw (P)">Pen</button>
+  <button data-tool="rect" title="Rectangle (R)">Rectangle</button>
   <button data-tool="ellipse" title="Ellipse (E)">Ellipse</button>
   <button data-tool="triangle" title="Triangle (T)">Triangle</button>
   <div class="sep"></div>
@@ -68,7 +69,7 @@ const $ = id => document.getElementById(id);
 const BANDS = ['bass', 'mid', 'treble', 'level', 'beat'];
 const PROPS = { scale:'Scale', rotate:'Rotate', opacity:'Opacity', x:'Offset X', y:'Offset Y', hue:'Hue shift' };
 
-const state = { shapes: [], sel: null, tool: 'rect', nextId: 1 };
+const state = { shapes: [], sel: null, tool: 'pen', nextId: 1 };
 const audio = new Audio();
 audio.crossOrigin = 'anonymous';
 let actx, analyser, freq, hasAudio = false;
@@ -110,11 +111,54 @@ function updateBands() {
 }
 
 // ---------- shapes ----------
+const randColor = () => '#' + Math.floor(Math.random() * 0x777777 + 0x777777).toString(16).padStart(6, '0');
 function makeShape(type, x, y, w, h) {
-  return { id: state.nextId++, type, x, y, w, h, rot: 0, opacity: 1,
-           fill: '#' + Math.floor(Math.random() * 0x777777 + 0x777777).toString(16).padStart(6, '0'),
-           bindings: [] };
+  return { id: state.nextId++, type, x, y, w, h, rot: 0, opacity: 1, fill: randColor(), bindings: [] };
 }
+
+// ---------- pen strokes ----------
+// Ramer-Douglas-Peucker (iterative): drop points within eps px of the simplified line
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    let md = 0, mi = -1;
+    for (let i = a + 1; i < b; i++) {
+      const d = segDist(pts[i], pts[a], pts[b]);
+      if (d > md) { md = d; mi = i; }
+    }
+    if (md > eps) { keep[mi] = 1; stack.push([a, mi], [mi, b]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+function segDist(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+// raw world-space points -> a path shape whose pts are normalized to its bounding box (-0.5..0.5)
+function finishStroke(d) {
+  const pts = rdp(d.pts, 1.5);
+  if (pts.length < 2) return null;   // a click with no drag
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+  const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
+  const w = Math.max(maxx - minx, 8), h = Math.max(maxy - miny, 8), cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+  const s = makeShape('path', cx, cy, w, h);
+  s.fill = d.color; s.lw = d.lw;
+  s.pts = pts.map(q => [(q[0] - cx) / w, (q[1] - cy) / h]);
+  return s;
+}
+// smooth curve through the midpoints of the (simplified) polyline
+function strokePath(P) {
+  ctx.beginPath(); ctx.moveTo(P[0][0], P[0][1]);
+  for (let i = 1; i < P.length - 1; i++)
+    ctx.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
+  ctx.lineTo(P[P.length - 1][0], P[P.length - 1][1]);
+}
+const toLocalPts = s => s.pts.map(([x, y]) => [x * s.w, y * s.h]);
+
 const sel = () => state.shapes.find(s => s.id === state.sel);
 
 function effective(s, animate) {
@@ -161,9 +205,19 @@ function draw() {
     ctx.save();
     ctx.translate(e.x, e.y); ctx.rotate(e.rot * Math.PI / 180); ctx.scale(e.sc, e.sc);
     ctx.globalAlpha = e.op;
-    ctx.fillStyle = hueShift(s.fill, e.hue);
-    path(s, s.w, s.h); ctx.fill();
+    if (s.type === 'path') {
+      ctx.strokeStyle = hueShift(s.fill, e.hue); ctx.lineWidth = s.lw;
+      ctx.lineJoin = ctx.lineCap = 'round';
+      strokePath(toLocalPts(s)); ctx.stroke();
+    } else {
+      ctx.fillStyle = hueShift(s.fill, e.hue);
+      path(s, s.w, s.h); ctx.fill();
+    }
     ctx.restore();
+  }
+  if (drag && drag.mode === 'pen' && drag.draft.pts.length > 1) {   // stroke in progress
+    ctx.strokeStyle = drag.draft.color; ctx.lineWidth = drag.draft.lw; ctx.lineJoin = ctx.lineCap = 'round';
+    ctx.beginPath(); drag.draft.pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke();
   }
   const s = sel();
   if (s && !animate) {   // selection box + resize handle
@@ -189,6 +243,11 @@ function local(s, p) {   // world -> shape local space
 function hit(p) {
   for (let i = state.shapes.length - 1; i >= 0; i--) {
     const s = state.shapes[i], l = local(s, p);
+    if (s.type === 'path') {
+      const P = toLocalPts(s), r = s.lw / 2 + 6;
+      for (let j = 1; j < P.length; j++) if (segDist([l.x, l.y], P[j - 1], P[j]) <= r) return s;
+      continue;
+    }
     if (Math.abs(l.x) <= s.w / 2 && Math.abs(l.y) <= s.h / 2) return s;
   }
   return null;
@@ -198,6 +257,10 @@ cv.addEventListener('pointerdown', ev => {
   if (!audio.paused) return;
   cv.setPointerCapture(ev.pointerId);
   const p = pos(ev);
+  if (state.tool === 'pen') {
+    drag = { mode: 'pen', draft: { color: randColor(), lw: 4, pts: [[p.x, p.y]] } };
+    return;
+  }
   if (state.tool !== 'select') {
     const s = makeShape(state.tool, p.x, p.y, 1, 1);
     state.shapes.push(s); state.sel = s.id;
@@ -216,7 +279,13 @@ cv.addEventListener('pointerdown', ev => {
 });
 cv.addEventListener('pointermove', ev => {
   if (!drag) return;
-  const p = pos(ev), s = sel(); if (!s) return;
+  const p = pos(ev);
+  if (drag.mode === 'pen') {   // sample only when the cursor moved >= 2px
+    const last = drag.draft.pts[drag.draft.pts.length - 1];
+    if (Math.hypot(p.x - last[0], p.y - last[1]) >= 2) drag.draft.pts.push([p.x, p.y]);
+    return;
+  }
+  const s = sel(); if (!s) return;
   if (drag.mode === 'create') {
     s.x = (p.x + drag.start.x) / 2; s.y = (p.y + drag.start.y) / 2;
     s.w = Math.abs(p.x - drag.start.x); s.h = Math.abs(p.y - drag.start.y);
@@ -224,6 +293,10 @@ cv.addEventListener('pointermove', ev => {
   else { const l = local(s, p); s.w = Math.max(8, Math.abs(l.x) * 2); s.h = Math.max(8, Math.abs(l.y) * 2); }
 });
 addEventListener('pointerup', () => {
+  if (drag && drag.mode === 'pen') {
+    const s = finishStroke(drag.draft);
+    if (s) { state.shapes.push(s); state.sel = s.id; }
+  }
   if (drag && drag.mode === 'create') {
     const s = sel();
     if (s && (s.w < 6 || s.h < 6)) { s.w = 120; s.h = 120; }   // plain click => default size
@@ -231,7 +304,7 @@ addEventListener('pointerup', () => {
   if (drag) renderInspector();
   drag = null;
 });
-const KEYS = { v: 'select', r: 'rect', e: 'ellipse', t: 'triangle' };
+const KEYS = { v: 'select', p: 'pen', r: 'rect', e: 'ellipse', t: 'triangle' };
 addEventListener('keydown', ev => {
   if (!/INPUT|SELECT/.test(document.activeElement.tagName) && !ev.ctrlKey && !ev.metaKey) {
     if (ev.key === 'Escape') setTool('select');
@@ -289,12 +362,13 @@ $('load').onchange = async e => {
 // ---------- inspector ----------
 function renderInspector() {
   const el = $('inspector'), s = sel();
-  if (!s) { el.innerHTML = '<p class="dim">Drag on the canvas to draw a shape (or click for a default size). Switch tools with the toolbar or V / R / E / T (Esc = Select), then select a shape to edit it and bind it to the music.</p>'; return; }
+  if (!s) { el.innerHTML = '<p class="dim">Click and drag on the canvas to draw freehand with the pen. Switch tools with the toolbar or V / P / R / E / T (Esc = Select) to place shapes or select and move them, then select a shape to edit it and bind it to the music.</p>'; return; }
   const opt = (obj, cur) => (Array.isArray(obj) ? obj.map(k => [k, k]) : Object.entries(obj))
     .map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${v}</option>`).join('');
   el.innerHTML = `
-    <h3>Shape (${s.type})</h3>
-    <div class="row"><span>Fill</span><input type="color" id="i-fill" value="${s.fill}"></div>
+    <h3>Shape (${s.type}${s.pts ? ', ' + s.pts.length + ' pts' : ''})</h3>
+    <div class="row"><span>${s.pts ? 'Color' : 'Fill'}</span><input type="color" id="i-fill" value="${s.fill}"></div>
+    ${s.pts ? `<div class="row"><span>Line</span><input type="number" id="i-lw" min="1" max="60" value="${s.lw}"></div>` : ''}
     <div class="row"><span>Width</span><input type="number" id="i-w" value="${Math.round(s.w)}"></div>
     <div class="row"><span>Height</span><input type="number" id="i-h" value="${Math.round(s.h)}"></div>
     <div class="row"><span>Rotation</span><input type="number" id="i-rot" value="${Math.round(s.rot)}"></div>
@@ -311,6 +385,7 @@ function renderInspector() {
     <button id="i-addb">+ Add binding</button>`;
   const bind = (id, fn) => $(id).oninput = e => fn(e.target);
   bind('i-fill', t => s.fill = t.value);
+  if (s.pts) bind('i-lw', t => s.lw = Math.max(1, +t.value));
   bind('i-w', t => s.w = Math.max(1, +t.value));
   bind('i-h', t => s.h = Math.max(1, +t.value));
   bind('i-rot', t => s.rot = +t.value);
