@@ -288,7 +288,10 @@
             const frame = document.getElementById("shapes-frame");
             document.body.classList.toggle("wide", section === "shapes");
             if (section === "shapes") {
-                if (!frame.getAttribute("src")) frame.src = "/apps/music-shapes/index.html";
+                if (!frame.getAttribute("src")) {
+                    frame.onload = () => frame.focus();   // so keyboard shortcuts (M, V/P/R/E/T) reach the app without an extra click
+                    frame.src = "/apps/music-shapes/index.html";
+                }
             } else if (frame.getAttribute("src")) {
                 frame.removeAttribute("src");
             }

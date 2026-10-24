@@ -12,6 +12,8 @@
   header { border-bottom:1px solid var(--line); }
   footer { border-top:1px solid var(--line); }
   main { display:grid; grid-template-columns:1fr 280px; min-height:0; }
+  #toast { position:fixed; left:calc(50% - 140px); bottom:70px; transform:translateX(-50%); background:#272a35; border:1px solid var(--accent); color:var(--text); padding:7px 14px; border-radius:6px; opacity:0; pointer-events:none; transition:opacity .15s; z-index:5; }
+  #toast.show { opacity:1; }
   #stage { display:flex; align-items:center; justify-content:center; padding:16px; min-width:0; min-height:0; }
   canvas { background:#0b0b0f; max-width:100%; max-height:100%; aspect-ratio:16/9; border:1px solid var(--line); touch-action:none; }
   aside { background:var(--panel); border-left:1px solid var(--line); padding:12px; overflow:auto; }
@@ -70,7 +72,7 @@
   <label class="file" style="background:#272a35">Load JSON<input id="load" type="file" accept="application/json" hidden></label>
 </header>
 <main>
-  <div id="stage"><canvas id="cv" width="960" height="540"></canvas></div>
+  <div id="stage"><canvas id="cv" width="960" height="540"></canvas><div id="toast" role="status"></div></div>
   <aside id="inspector"></aside>
 </main>
 <footer>
@@ -118,9 +120,12 @@ function deleteShape(id) {
   state.selEvent = null;
 }
 function addEvent() {
-  if (!state.selIds.length || !audio.duration) return;   // with several shapes selected, one event covers them all
+  if (!audio.duration) return toast('Upload audio first');
+  if (!state.selIds.length) return toast('Select a shape first, then press M');
+  // with several shapes selected, one event covers them all
   const e = { id: state.nextEv++, shapeIds: [...state.selIds], time: +audio.currentTime.toFixed(2), action: 'toggle' };
   state.events.push(e); state.selEvent = e.id; renderInspector();
+  toast(`Event added at ${e.time.toFixed(1)}s · ${e.shapeIds.length === 1 ? '1 shape' : e.shapeIds.length + ' shapes'}`);
 }
 const audio = new Audio();
 audio.crossOrigin = 'anonymous';
@@ -213,6 +218,8 @@ const toLocalPts = s => s.pts.map(([x, y]) => [x * s.w, y * s.h]);
 
 const sel = () => state.shapes.find(s => s.id === state.sel);
 const selShapes = () => state.shapes.filter(s => state.selIds.includes(s.id));
+// the shape as currently drawn (audio bindings applied) so clicks and outlines follow it during playback
+function view(s) { const e = effective(s, true); return { ...s, x: e.x, y: e.y, rot: e.rot, w: s.w * e.sc, h: s.h * e.sc }; }
 // axis-aligned bounds of a (possibly rotated) shape: [minx, miny, maxx, maxy]
 function aabb(s) {
   const a = s.rot * Math.PI / 180, c = Math.cos(a), n = Math.sin(a);
@@ -288,14 +295,14 @@ function draw() {
     ctx.strokeStyle = drag.draft.color; ctx.lineWidth = drag.draft.lw; ctx.lineJoin = ctx.lineCap = 'round';
     ctx.beginPath(); drag.draft.pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke();
   }
-  if (!animate) {   // selection outlines (+ resize handle when exactly one shape is selected)
-    const chosen = selShapes();
+  {   // selection outlines (+ resize handle when exactly one shape is selected and we're paused)
+    const chosen = selShapes().map(o => animate ? view(o) : o);
     for (const s of chosen) {
       ctx.save();
       ctx.translate(s.x, s.y); ctx.rotate(s.rot * Math.PI / 180);
       ctx.strokeStyle = '#6c8cff'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
       ctx.strokeRect(-s.w / 2, -s.h / 2, s.w, s.h);
-      if (chosen.length === 1) { ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.fillRect(s.w / 2 - 5, s.h / 2 - 5, 10, 10); }
+      if (chosen.length === 1 && !animate) { ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.fillRect(s.w / 2 - 5, s.h / 2 - 5, 10, 10); }
       ctx.restore();
     }
     if (chosen.length > 1) {   // group box
@@ -321,24 +328,34 @@ function local(s, p) {   // world -> shape local space
   return { x: dx * Math.cos(a) - dy * Math.sin(a), y: dx * Math.sin(a) + dy * Math.cos(a) };
 }
 function hit(p) {
+  const playing = !audio.paused, t = audio.currentTime || 0;
   for (let i = state.shapes.length - 1; i >= 0; i--) {
-    const s = state.shapes[i], l = local(s, p);
+    const o = state.shapes[i];
+    if (playing && visAlpha(o, t) < 0.05) continue;   // hidden shapes can't be picked
+    const s = playing ? view(o) : o, l = local(s, p), found = o;
     if (s.type === 'path') {
       const P = toLocalPts(s), r = s.lw / 2 + 6;
-      for (let j = 1; j < P.length; j++) if (segDist([l.x, l.y], P[j - 1], P[j]) <= r) return s;
+      for (let j = 1; j < P.length; j++) if (segDist([l.x, l.y], P[j - 1], P[j]) <= r) return found;
       continue;
     }
-    if (Math.abs(l.x) <= s.w / 2 && Math.abs(l.y) <= s.h / 2) return s;
+    if (Math.abs(l.x) <= s.w / 2 && Math.abs(l.y) <= s.h / 2) return found;
   }
   return null;
 }
 let drag = null;
 const marqueeRect = d => [Math.min(d.start.x, d.cur.x), Math.min(d.start.y, d.cur.y), Math.max(d.start.x, d.cur.x), Math.max(d.start.y, d.cur.y)];
 cv.addEventListener('pointerdown', ev => {
-  if (!audio.paused) return;
+  const playing = !audio.paused;
   cv.setPointerCapture(ev.pointerId);
   const p = pos(ev);
   state.selEvent = null;
+  if (playing) {   // while the track plays you can pick shapes (to mark events with M) but not edit them
+    const h = hit(p);
+    if (ev.shiftKey && h) state.selIds = state.selIds.includes(h.id) ? state.selIds.filter(x => x !== h.id) : [...state.selIds, h.id];
+    else if (h) { if (!state.selIds.includes(h.id)) state.sel = h.id; }
+    else { const base = ev.shiftKey ? [...state.selIds] : []; state.selIds = base; drag = { mode: 'marquee', start: p, cur: p, base }; }
+    return renderInspector();
+  }
   if (state.tool === 'pen') {
     drag = { mode: 'pen', draft: { color: randColor(), lw: 4, pts: [[p.x, p.y]] } };
     return;
@@ -380,7 +397,7 @@ cv.addEventListener('pointermove', ev => {
   if (drag.mode === 'marquee') {
     drag.cur = p;
     const [x0, y0, x1, y1] = marqueeRect(drag);
-    const inside = state.shapes.filter(s => { const b = aabb(s); return b[0] <= x1 && b[2] >= x0 && b[1] <= y1 && b[3] >= y0; }).map(s => s.id);
+    const inside = state.shapes.filter(s => { const b = aabb(audio.paused ? s : view(s)); return b[0] <= x1 && b[2] >= x0 && b[1] <= y1 && b[3] >= y0; }).map(s => s.id);
     state.selIds = [...new Set([...drag.base, ...inside])];
     return;
   }
@@ -406,17 +423,27 @@ addEventListener('pointerup', () => {
   if (drag) renderInspector();
   drag = null;
 });
+let toastTimer = null;
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+}
 const KEYS = { v: 'select', p: 'pen', r: 'rect', e: 'ellipse', t: 'triangle' };
 addEventListener('keydown', ev => {
-  if (!/INPUT|SELECT/.test(document.activeElement.tagName) && !ev.ctrlKey && !ev.metaKey) {
+  const ae = document.activeElement, tag = ae.tagName;
+  // only text-entry controls swallow shortcuts (a focused slider/button/colour picker must not)
+  const textEntry = tag === 'TEXTAREA' || ae.isContentEditable || (tag === 'INPUT' && !/^(range|color|checkbox|radio|file|button)$/.test(ae.type));
+  const typing = textEntry || tag === 'SELECT';   // dropdowns also keep letter keys for their own type-ahead
+  if (!typing && !ev.ctrlKey && !ev.metaKey) {
     if (ev.key === 'Escape') setTool('select');
     else if (KEYS[ev.key.toLowerCase()]) setTool(KEYS[ev.key.toLowerCase()]);
   }
-  const typing = /INPUT|SELECT/.test(document.activeElement.tagName);
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'a' && !typing) {
     ev.preventDefault(); setTool('select'); state.selIds = state.shapes.map(s => s.id); state.selEvent = null; renderInspector();
   }
-  if (ev.key.toLowerCase() === 'm' && !typing && !ev.ctrlKey && !ev.metaKey) addEvent();   // mark an event at the playhead
+  if (ev.key.toLowerCase() === 'm' && !textEntry && !ev.ctrlKey && !ev.metaKey) {   // mark an event at the playhead
+    ev.preventDefault(); if (!ev.repeat) addEvent();
+  }
   if ((ev.key === 'Delete' || ev.key === 'Backspace') && !typing) {
     if (state.selEvent) { state.events = state.events.filter(e => e.id !== state.selEvent); state.selEvent = null; renderInspector(); }
     else if (state.selIds.length) { [...state.selIds].forEach(deleteShape); renderInspector(); }   // deletes the whole selection
