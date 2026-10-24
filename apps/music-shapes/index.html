@@ -24,6 +24,11 @@
   .thumb:hover { border-color:var(--accent); }
   .thumb canvas { width:60px; height:60px; background:none !important; border:0; aspect-ratio:auto; max-width:none; max-height:none; display:block; margin:0 auto; }
   .thumb span { display:block; font-size:10px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #exportbar { position:absolute; left:50%; top:14px; transform:translateX(-50%); display:none; align-items:center; gap:10px; background:#2b1a1a; border:1px solid #ff6c6c; border-radius:6px; padding:6px 12px; z-index:7; white-space:nowrap; }
+  body.exporting #exportbar { display:flex; }
+  #exportbar .bar { width:160px; height:6px; background:#442; border-radius:3px; overflow:hidden; } #exportbar .bar i { display:block; height:100%; width:0; background:#ff6c6c; }
+  body.exporting header, body.exporting aside, body.exporting #tray, body.exporting footer, body.exporting canvas { pointer-events:none; opacity:.6; }
+  body.exporting #stage { pointer-events:auto; }
   #banner { position:absolute; left:50%; top:60px; transform:translateX(-50%); white-space:nowrap; background:#2a2140; border:1px solid #9b7bff; color:#e6e8ee; padding:6px 14px; border-radius:6px; z-index:4; display:none; }
   #banner.show { display:block; }
   .xfbar { position:absolute; top:12px; height:8px; border-radius:4px; opacity:.5; pointer-events:none; background:linear-gradient(to right, var(--a), var(--b)); }
@@ -101,13 +106,17 @@
   <label class="file stage-only">Upload audio<input id="file" type="file" accept="audio/*" hidden></label>
   <span id="fname" class="dim stage-only">no file</span>
   <div class="sep"></div>
+  <button id="export" class="stage-only" title="Export what plays on the stage (picture and sound) as a video file. It records in real time, so it takes as long as the track.">Export video</button>
+  <select id="expq" class="stage-only" title="Quality" aria-label="Export quality"><option value="compressed" selected>Compressed</option><option value="high">High quality</option></select>
+  <select id="expfmt" class="stage-only" title="File type" aria-label="Export file type"><option value="webm" selected>WebM</option><option value="mp4" title="H.264 video with Opus audio: some players (QuickTime) can't play Opus audio">MP4</option></select>
+  <div class="sep stage-only"></div>
   <button id="save">Save JSON</button>
   <label class="file" style="background:#272a35">Load JSON<input id="load" type="file" accept="application/json" hidden></label>
   <button id="newproj" title="Start over (clears the library and the stage)">New</button>
 </header>
 <main>
   <div id="left">
-    <div id="stage"><canvas id="cv" width="960" height="540" tabindex="0"></canvas><div id="modelabel"></div><div id="banner"></div><div id="toast" role="status"></div></div>
+    <div id="stage"><canvas id="cv" width="960" height="540" tabindex="0"></canvas><div id="modelabel"></div><div id="exportbar"><span id="exptext">Exporting…</span><span class="bar"><i id="expfill"></i></span><button id="expcancel">Cancel (Esc)</button></div><div id="banner"></div><div id="toast" role="status"></div></div>
     <div id="tray" class="stage-only"></div>
   </div>
   <aside id="inspector"></aside>
@@ -238,9 +247,9 @@ function outline(s) {
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 const mixColor = (a, b, k) => { const A = hexRgb(a), B = hexRgb(b); return `rgb(${A.map((v, i) => Math.round(lerp(v, B[i], k))).join(',')})`; };
 const angDiff = (a, b) => ((b - a + 540) % 360) - 180;
-function drawMorph(A, B, k, t, playing) {
+function drawMorph(A, B, k, t, ghost) {
   const pa = outline(A), pb = outline(B), pt = pa.map((q, i) => [lerp(q[0], pb[i][0], k), lerp(q[1], pb[i][1], k)]);
-  const va = lerp(visAlpha(A, t), visAlpha(B, t), k), alpha = lerp(A.opacity, B.opacity, k) * (va + (1 - va) * (playing ? 0.12 : 0.25));
+  const va = visAlpha(A, t), alpha = lerp(A.opacity, B.opacity, k) * (va + (1 - va) * ghost);   // only the source's own events matter mid-morph; the destination takes over when it ends
   const fillK = lerp(A.type === 'path' ? 0 : 1, B.type === 'path' ? 0 : 1, k), strokeK = lerp(A.type === 'path' ? 1 : 0, B.type === 'path' ? 1 : 0, k);
   const lw = lerp(A.type === 'path' ? A.lw : 0, B.type === 'path' ? B.lw : 0, k);
   ctx.save();
@@ -416,20 +425,23 @@ function path(s, w, h, c = ctx) {
 }
 function draw() {
   const playing = !audio.paused, t = audio.currentTime || 0;
+  const clean = state.exporting;   // exporting: render only the presentation (no outlines, ghosts, hints) on a solid background
+  const ghost = clean ? 0 : playing ? 0.12 : 0.25;
   syncInstances();
   ctx.clearRect(0, 0, W, H);
-  if (!state.shapes.length && !drag) {
+  if (clean) { ctx.fillStyle = '#0b0b0f'; ctx.fillRect(0, 0, W, H); }
+  if (!clean && !state.shapes.length && !drag) {
     ctx.fillStyle = '#4a4e5c'; ctx.font = '20px system-ui, sans-serif'; ctx.textAlign = 'center';
     ctx.fillText(state.mode === 'workshop' ? 'Click and drag to draw a shape for your library' : (state.symbols.length ? 'Bring shapes in from the library below' : 'Your library is empty: draw shapes in the Workshop first'), W / 2, H / 2);
   }
   for (const s of state.shapes) {
     // hidden shapes stay as faint ghosts (25% paused, 12% playing) so they can still be edited / clicked to mark their next event
     const { mult, morph } = xfFactor(s, t);
-    if (morph) { const B = state.shapes.find(x => x.id === morph.x.to); if (B) { drawMorph(s, B, morph.k, t, playing); continue; } }
+    if (morph) { const B = state.shapes.find(x => x.id === morph.x.to); if (B) { drawMorph(s, B, morph.k, t, ghost); continue; } }
     const va = visAlpha(s, t) * mult;
     ctx.save();
     ctx.translate(s.x, s.y); ctx.rotate(s.rot * Math.PI / 180);
-    ctx.globalAlpha = s.opacity * (va + (1 - va) * (playing ? 0.12 : 0.25));
+    ctx.globalAlpha = s.opacity * (va + (1 - va) * ghost);
     if (s.type === 'path') {
       ctx.strokeStyle = s.fill; ctx.lineWidth = s.lw;
       ctx.lineJoin = ctx.lineCap = 'round';
@@ -440,6 +452,7 @@ function draw() {
     }
     ctx.restore();
   }
+  if (clean) return;
   if (drag && drag.mode === 'pen' && drag.draft.pts.length > 1) {   // stroke in progress
     ctx.strokeStyle = drag.draft.color; ctx.lineWidth = drag.draft.lw; ctx.lineJoin = ctx.lineCap = 'round';
     ctx.beginPath(); drag.draft.pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke();
@@ -529,6 +542,7 @@ function hit(p, forgiving) {
 let drag = null;
 const marqueeRect = d => [Math.min(d.start.x, d.cur.x), Math.min(d.start.y, d.cur.y), Math.max(d.start.x, d.cur.x), Math.max(d.start.y, d.cur.y)];
 cv.addEventListener('pointerdown', ev => {
+  if (state.exporting) return;
   const playing = !audio.paused;
   try { window.focus(); cv.focus({ preventScroll: true }); } catch {}   // make sure keystrokes (M, V/P/R/E/T) go to this document, e.g. inside an iframe
   try { cv.setPointerCapture(ev.pointerId); } catch {}   // must never abort the handler
@@ -623,6 +637,7 @@ function toast(msg) {
 }
 const KEYS = { v: 'select', p: 'pen', r: 'rect', e: 'ellipse', t: 'triangle', x: 'transform' };
 addEventListener('keydown', ev => {
+  if (state.exporting) { if (ev.key === 'Escape' && exportJob) { ev.preventDefault(); exportJob.cancel(); } return; }   // editing is locked while recording
   const ae = document.activeElement, tag = ae.tagName;
   // only text-entry controls swallow shortcuts (a focused slider/button/colour picker must not)
   const textEntry = tag === 'TEXTAREA' || ae.isContentEditable || (tag === 'INPUT' && !/^(range|color|checkbox|radio|file|button)$/.test(ae.type));
@@ -738,6 +753,63 @@ $('fs').onclick = toggleFullscreen;
 audio.onplay = () => $('play').textContent = 'Pause';
 audio.onpause = () => $('play').textContent = 'Play';
 audio.onended = () => $('play').textContent = 'Play';
+// ---------- export: record the stage (picture + sound) to a video file ----------
+// Real time: the track plays from the start while the canvas and the audio are recorded. WebM (VP9 + Opus) is the default;
+// MP4 is H.264 video with Opus audio. A fresh audio capture is made for each export (reusing one yields empty files).
+const EXPORT_Q = { compressed: [2.5e6, 128e3], high: [8e6, 192e3] };
+const EXPORT_TYPES = { webm: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'], mp4: ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4'] };
+const exportType = f => window.MediaRecorder && (EXPORT_TYPES[f] || []).find(t => MediaRecorder.isTypeSupported(t));
+let exportJob = null;
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+async function exportVideo() {
+  if (exportJob || !needAudio()) return;
+  const ext = $('expfmt').value, type = exportType(ext);
+  if (!type || !cv.captureStream || !audio.captureStream) return toast('Exporting video is not supported in this browser');
+  const [vbr, abr] = EXPORT_Q[$('expq').value];
+  const prev = { t: audio.currentTime, rate: audio.playbackRate, loop: audio.loop, muted: audio.muted, vol: audio.volume };
+  if (state.pendingXf) cancelPendingXf();
+  audio.pause(); audio.currentTime = 0; audio.playbackRate = 1; audio.loop = false; audio.volume = 1; audio.muted = true;   // silent while recording; the captured sound is unaffected
+  state.exporting = true; state.selIds = []; state.selEvent = state.selXf = null; state.flash = state.ripple = null;
+  document.body.classList.add('exporting'); renderInspector();
+  let tick, rec, video, cancelled = false;
+  const dur = audio.duration;
+  try {
+    exportJob = { cancel: () => {} };
+    video = cv.captureStream(30);
+    await audio.play();
+    rec = new MediaRecorder(new MediaStream([...video.getVideoTracks(), ...audio.captureStream().getAudioTracks()]), { mimeType: type, videoBitsPerSecond: vbr, audioBitsPerSecond: abr });
+    const chunks = [], stopped = new Promise(r => { rec.onstop = r; });
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    const finished = new Promise(res => { audio.addEventListener('ended', () => res(false), { once: true }); exportJob.cancel = () => { audio.pause(); res(true); }; });
+    rec.start(250);
+    tick = setInterval(() => { const f = Math.min(1, audio.currentTime / dur); $('expfill').style.width = f * 100 + '%'; $('exptext').textContent = `Exporting ${ext.toUpperCase()}… ${fmt(audio.currentTime)} / ${fmt(dur)}  ·  keep this tab visible`; }, 150);
+    cancelled = await finished;
+    if (!cancelled) await new Promise(r => setTimeout(r, 300));   // let the last frames flush
+    rec.stop(); await stopped;
+    if (cancelled) toast('Export cancelled');
+    else {
+      const blob = new Blob(chunks, { type: type.split(';')[0] });
+      if (!blob.size) throw new Error('nothing was recorded');
+      downloadBlob(blob, `music-shapes.${ext}`);
+      toast(`Exported music-shapes.${ext} (${(blob.size / 1e6).toFixed(1)} MB)`);
+    }
+  } catch (err) { toast('Export failed: ' + (err && err.message || err)); }
+  finally {
+    clearInterval(tick); try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {}
+    if (video) video.getTracks().forEach(t => t.stop());
+    audio.pause(); audio.currentTime = prev.t; audio.playbackRate = prev.rate; audio.loop = prev.loop; audio.muted = prev.muted; audio.volume = prev.vol;
+    state.exporting = false; exportJob = null; document.body.classList.remove('exporting'); renderInspector();
+  }
+}
+$('export').onclick = exportVideo;
+$('expcancel').onclick = () => exportJob && exportJob.cancel();
+$('expq').onchange = $('expfmt').onchange = ev => ev.target.blur();
+if (!exportType('mp4')) { const o = $('expfmt').querySelector('option[value=mp4]'); o.disabled = true; o.textContent = 'MP4 (not supported here)'; }
+document.addEventListener('visibilitychange', () => { if (document.hidden && exportJob) { exportJob.cancel(); toast('Export cancelled: keep this tab visible while it records'); } });
 let seeking = false;
 $('seek').addEventListener('pointerdown', () => { seeking = true; });
 addEventListener('pointerup', () => { seeking = false; });
@@ -784,9 +856,7 @@ function loadProject(d) {
   updateBanner(); renderTray(); renderInspector();
 }
 $('save').onclick = () => {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(projectData(), null, 2)], { type: 'application/json' }));
-  a.download = 'design.json'; a.click();
+  downloadBlob(new Blob([JSON.stringify(projectData(), null, 2)], { type: 'application/json' }), 'design.json');
 };
 $('load').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
