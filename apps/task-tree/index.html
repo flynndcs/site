@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Tree</title>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1d1d1b; --muted: #8a8a85; --line: #dcdcd6;
+    --accent: #2f6fed; --ok: #2e9e5b; --chip: #eeeee9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ececE8; --muted: #8d8d86; --line: #333330; --accent: #6b9bff; --ok: #4cc27f; --chip: #242422; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 96px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  ul ul { margin-left: 11px; padding-left: 16px; border-left: 1px solid var(--line); }
+  .row { display: flex; align-items: center; gap: 8px; padding: 4px 0; min-height: 34px; }
+  .row:hover .del { opacity: 1; }
+  .chev, .add, .del, .kind { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .chev { width: 22px; height: 22px; padding: 0; color: var(--muted); flex: none; }
+  .chev.open { transform: rotate(90deg); }
+  input[type=checkbox] { width: 18px; height: 18px; margin: 2px; flex: none; accent-color: var(--ok); cursor: pointer; }
+  .label { flex: 1; min-width: 0; padding: 2px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+  .breakdown > .row .label { cursor: pointer; }
+  .breakdown > .row .label:hover { background: var(--chip); }
+  .done > .row .label { text-decoration: line-through; color: var(--muted); }
+  .edit { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 4px; outline: none; }
+  .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .kind { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--chip); color: var(--muted); flex: none; }
+  .kind:hover { color: var(--fg); }
+  .actionable > .row .kind { color: var(--accent); }
+  .del { opacity: 0; color: var(--muted); font-size: 18px; line-height: 1; padding: 0 4px; }
+  .del:hover { color: #d33; }
+  .add { width: 26px; height: 26px; margin: 4px 0 4px 0; border: 1px dashed var(--line); border-radius: 50%; color: var(--muted); font-size: 16px; line-height: 1; padding: 0; }
+  .add:hover { color: var(--accent); border-color: var(--accent); }
+  .add.root { width: auto; height: auto; border-radius: 6px; padding: 6px 14px; font-size: 14px; }
+  @media (hover: none) { .del { opacity: 1; } }
+
+  .views { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--chip); margin: 0 0 16px; }
+  .views button { font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+  .views button.on { background: var(--bg); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
+
+  /* Tree view: same nested markup, drawn top-down with connector lines */
+  body.wide main { max-width: none; }
+  #root { overflow-x: auto; }
+  .tree ul { display: flex; justify-content: center; position: relative; margin: 0; padding: 20px 0 0; border: 0; }
+  .tree > ul { padding-top: 0; width: max-content; min-width: 100%; align-items: flex-start; }
+  .tree li { display: flex; flex-direction: column; align-items: center; position: relative; padding: 20px 6px 0; }
+  .tree > ul > li { padding-top: 0; }
+  .tree > ul > li::before, .tree > ul > li::after { display: none; }
+  .tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; height: 20px; border-left: 1px solid var(--line); }
+  .tree li::before, .tree li::after { content: ''; position: absolute; top: 0; right: 50%; width: 50%; height: 20px; border-top: 1px solid var(--line); }
+  .tree li::after { right: auto; left: 50%; border-left: 1px solid var(--line); }
+  .tree li:only-child { padding-top: 0; }
+  .tree li:only-child::before, .tree li:only-child::after { display: none; }
+  .tree li:first-child::before, .tree li:last-child::after { border: 0 none; }
+  .tree li:last-child::before { border-right: 1px solid var(--line); border-radius: 0 6px 0 0; }
+  .tree li:first-child::after { border-radius: 6px 0 0 0; }
+  .tree .row { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--bg); }
+  .tree .actionable > .row { border-color: var(--accent); }
+  .tree .actionable.done > .row { border-color: var(--ok); }
+  .tree .label { flex: none; max-width: 180px; }
+  .tree .edit { flex: none; width: 160px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Task Tree</h1>
+  <p class="hint">Click a <b>breakdown</b> item to split it into sub-items. Mark leaves <b>actionable</b> to get a done checkbox. Enter adds a sibling, double-click renames.</p>
+  <div class="views">
+    <button data-view="list">List</button>
+    <button data-view="tree">Tree</button>
+  </div>
+  <div id="root"></div>
+</main>
+<script>
+const KEY = 'task-tree-v1';
+let tree = [];
+try { tree = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) {}
+let editing = null; // id of the node whose text input should be focused
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+const newNode = () => ({ id: uid(), text: '', kind: 'breakdown', done: false, open: false, children: [] });
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tree)); } catch (e) {} };
+
+function leaves(n) {
+  if (n.kind === 'actionable' || !n.children.length) return n.kind === 'actionable' ? [n] : [];
+  return n.children.flatMap(leaves);
+}
+
+function addAfter(list, index) {
+  const n = newNode();
+  list.splice(index + 1, 0, n);
+  editing = n.id;
+  return n;
+}
+
+function removeNode(list, n) {
+  list.splice(list.indexOf(n), 1);
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function labelSpan(n) {
+  const s = el('span', 'label', n.text);
+  s.ondblclick = () => { editing = n.id; render(); };
+  return s;
+}
+
+function renderList(list, parentNode) {
+  const ul = el('ul');
+  list.forEach((n, i) => {
+    const li = el('li', n.kind + (n.done && n.kind === 'actionable' ? ' done' : ''));
+    const row = el('div', 'row');
+
+    if (n.kind === 'actionable') {
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = n.done;
+      cb.onchange = () => { n.done = cb.checked; save(); render(); };
+      row.append(cb);
+    } else {
+      const ch = el('button', 'chev' + (n.open ? ' open' : ''), '▸');
+      ch.title = 'Break down';
+      onPress(ch, () => toggle(n));
+      row.append(ch);
+    }
+
+    if (editing === n.id) {
+      const inp = el('input', 'edit');
+      inp.value = n.text;
+      inp.placeholder = 'New item';
+      inp.onkeydown = e => {
+        if (e.key === 'Enter') {
+          if (!inp.value.trim()) return;
+          n.text = inp.value.trim();
+          addAfter(list, list.indexOf(n));
+          save(); render();
+        } else if (e.key === 'Escape') {
+          inp.blur();
+        }
+      };
+      inp.onblur = () => {
+        n.text = inp.value.trim();
+        if (editing !== n.id) { save(); return; }
+        editing = null;
+        if (!n.text) { render(); return; } // render() prunes the blank item
+        save();
+        inp.replaceWith(labelSpan(n));
+      };
+      row.append(inp);
+      queueMicrotask(() => { inp.focus(); inp.select(); });
+    } else {
+      const s = labelSpan(n);
+      if (n.kind === 'breakdown') onPress(s, () => toggle(n));
+      row.append(s);
+    }
+
+    if (n.kind === 'breakdown' && n.children.length) {
+      const ls = leaves(n);
+      if (ls.length) row.append(el('span', 'count', ls.filter(x => x.done).length + '/' + ls.length));
+    }
+
+    const kind = el('button', 'kind', n.kind === 'actionable' ? 'actionable' : 'needs breakdown');
+    kind.title = 'Toggle type';
+    kind.onclick = () => { n.kind = n.kind === 'actionable' ? 'breakdown' : 'actionable'; save(); render(); };
+    const del = el('button', 'del', '×');
+    del.title = 'Delete';
+    del.onclick = () => { removeNode(list, n); save(); render(); };
+    row.append(kind, del);
+    li.append(row);
+
+    if (n.kind === 'breakdown' && n.open) li.append(renderList(n.children, n));
+    ul.append(li);
+  });
+
+  const add = el('button', 'add' + (parentNode ? '' : ' root'), parentNode ? '+' : '+ Add item');
+  add.title = 'Add item';
+  add.onclick = () => { addAfter(list, list.length - 1); save(); render(); };
+  const wrap = el('li');
+  wrap.append(add);
+  ul.append(wrap);
+  return ul;
+}
+
+// Fire on mousedown without stealing focus, so a pending text box can't swallow the click
+// by blurring and re-rendering first. Keyboard activation (detail 0) still uses click.
+function onPress(e, fn) {
+  e.onmousedown = ev => { ev.preventDefault(); fn(); };
+  e.onclick = ev => { if (ev.detail === 0) fn(); };
+}
+
+// Drop blank items (except the one being edited); a parent left with no children collapses.
+function prune(list, parent) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const n = list[i];
+    prune(n.children, n);
+    if (!n.text && n.id !== editing) list.splice(i, 1);
+  }
+  if (parent && !list.length) parent.open = false;
+}
+
+// Clicking a breakdown item opens its level; the first child is created and focused.
+// Clicking again collapses the whole level.
+function toggle(n) {
+  if (n.open) { n.open = false; editing = null; }
+  else {
+    n.open = true;
+    if (!n.children.length) addAfter(n.children, -1);
+  }
+  save(); render();
+}
+
+let view = 'list';
+try { view = localStorage.getItem(KEY + '-view') || 'list'; } catch (e) {}
+
+document.querySelectorAll('.views button').forEach(b => {
+  b.onclick = () => {
+    view = b.dataset.view;
+    try { localStorage.setItem(KEY + '-view', view); } catch (e) {}
+    render();
+  };
+});
+
+function render() {
+  prune(tree, null);
+  save();
+  const root = document.getElementById('root');
+  root.className = view === 'tree' ? 'tree' : '';
+  document.body.classList.toggle('wide', view === 'tree');
+  document.querySelectorAll('.views button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  root.replaceChildren(renderList(tree, null));
+}
+render();
+</script>
+</body>
+</html>
