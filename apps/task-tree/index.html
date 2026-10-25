@@ -49,7 +49,7 @@
   body.wide main { max-width: none; }
   #root { overflow-x: auto; }
   .tree ul { display: flex; justify-content: center; position: relative; margin: 0; padding: 20px 0 0; border: 0; }
-  .tree > ul { padding-top: 0; width: max-content; min-width: 100%; align-items: flex-start; }
+  .tree > ul { padding-top: 0; flex-wrap: wrap; justify-content: flex-start; align-items: flex-start; gap: 16px 0; }
   .tree li { display: flex; flex-direction: column; align-items: center; position: relative; padding: 20px 6px 0; }
   .tree > ul > li { padding-top: 0; }
   .tree > ul > li::before, .tree > ul > li::after { display: none; }
